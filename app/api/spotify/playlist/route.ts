@@ -47,16 +47,25 @@ export async function GET(req: Request) {
     }
 
     try {
-        const tracks = await getPlaylistTracks(playlistId);
-        if (!tracks) {
-            return NextResponse.json(
-                {
-                    error:
-                        "Could not read that playlist. It has to be one created by a Spotify user and set to public — Spotify's own curated playlists can't be read by other apps.",
-                },
-                { status: 502 }
-            );
+        const result = await getPlaylistTracks(playlistId);
+        if (!result.ok) {
+            // Each cause gets its own sentence. These all used to be one
+            // message telling the user to check that the playlist is public,
+            // which wastes their time when the playlist is public and the
+            // actual fault is our credentials or Spotify itself.
+            const message =
+                result.reason === "no-token"
+                    ? "Spotify rejected this app's credentials, so nothing can be imported right now. This is a problem with the deployment's Spotify configuration, not with your playlist."
+                    : result.reason === "not-found"
+                      ? "Spotify says that playlist doesn't exist or isn't visible to other apps. If it's yours, open it in Spotify and check it's set to public — a playlist made in the mobile app is private by default."
+                      : result.reason === "forbidden"
+                        ? "Spotify refused access to that playlist. If it's yours and set to public, the app's Spotify credentials may not have permission to read it."
+                        : result.reason === "rate-limited"
+                          ? "Spotify is rate-limiting requests right now. Wait a minute and try again."
+                          : "Spotify couldn't be reached just now. Try again in a moment, or paste the song list instead.";
+            return NextResponse.json({ error: message }, { status: 502 });
         }
+        const tracks = result.tracks;
         if (tracks.length === 0) {
             return NextResponse.json({ error: "That playlist has no tracks" }, { status: 400 });
         }

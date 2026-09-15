@@ -77,14 +77,26 @@ async function getClientCredentialsToken(): Promise<string | null> {
             body: "grant_type=client_credentials",
             signal: AbortSignal.timeout(TIMEOUT_MS),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+            // Logged, not swallowed. A wrong client secret and a transient
+            // Spotify outage both used to reach the user as the same "could
+            // not read that playlist", with nothing written down anywhere --
+            // leaving no way to tell a configuration mistake from an upstream
+            // blip. Spotify's error body names the cause ("invalid_client"
+            // for bad credentials); it carries no user data and no part of
+            // our secret, so it is safe in a server log.
+            const detail = await res.text().catch(() => "<unreadable body>");
+            console.error("SPOTIFY TOKEN ERROR:", res.status, detail.slice(0, 300));
+            return null;
+        }
 
         const data = (await res.json()) as { access_token: string; expires_in: number };
         // Shave 30s off the reported lifetime so a request that starts near
         // the edge of expiry doesn't get a token that dies mid-flight.
         cachedToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 30) * 1000 };
         return data.access_token;
-    } catch {
+    } catch (err) {
+        console.error("SPOTIFY TOKEN REQUEST FAILED:", err);
         return null;
     }
 }
@@ -135,10 +147,25 @@ interface SpotifyTrackItem {
  * Reads every track in a public playlist, paginating through Spotify's
  * `next` links. Local files and region-blocked tracks come back with
  * `track: null` and are skipped rather than crashing the import.
+ *
+ * Returns a discriminated result rather than `tracks | null` so the route can
+ * tell the user something true. Every distinct failure here -- credentials
+ * Spotify rejects, a playlist genuinely not visible to an app, rate limiting,
+ * an outage -- used to arrive as the same bare `null` and therefore the same
+ * "make sure it's public" message, which is actively misleading when the
+ * playlist is public and the real problem is the client secret.
  */
-export async function getPlaylistTracks(playlistId: string): Promise<SpotifyPlaylistTrack[] | null> {
+export type PlaylistFetchResult =
+    | { ok: true; tracks: SpotifyPlaylistTrack[] }
+    | {
+          ok: false;
+          reason: "no-token" | "not-found" | "forbidden" | "rate-limited" | "upstream";
+          status: number;
+      };
+
+export async function getPlaylistTracks(playlistId: string): Promise<PlaylistFetchResult> {
     const token = await getClientCredentialsToken();
-    if (!token) return null;
+    if (!token) return { ok: false, reason: "no-token", status: 0 };
 
     const tracks: SpotifyPlaylistTrack[] = [];
     let url: string | null =
@@ -151,7 +178,26 @@ export async function getPlaylistTracks(playlistId: string): Promise<SpotifyPlay
                 headers: { Authorization: `Bearer ${token}` },
                 signal: AbortSignal.timeout(TIMEOUT_MS),
             });
-            if (!res.ok) return tracks.length > 0 ? tracks : null;
+            if (!res.ok) {
+                // Partial reads still count: a long playlist that dies on page
+                // three is better delivered short than thrown away entirely.
+                if (tracks.length > 0) return { ok: true, tracks };
+
+                const detail = await res.text().catch(() => "<unreadable body>");
+                console.error("SPOTIFY PLAYLIST READ ERROR:", res.status, playlistId, detail.slice(0, 300));
+                return {
+                    ok: false,
+                    reason:
+                        res.status === 404
+                            ? "not-found"
+                            : res.status === 401 || res.status === 403
+                              ? "forbidden"
+                              : res.status === 429
+                                ? "rate-limited"
+                                : "upstream",
+                    status: res.status,
+                };
+            }
 
             const data = (await res.json()) as { items: SpotifyTrackItem[]; next: string | null };
             for (const item of data.items) {
@@ -165,11 +211,13 @@ export async function getPlaylistTracks(playlistId: string): Promise<SpotifyPlay
             }
             url = data.next;
         }
-        return tracks;
-    } catch {
+        return { ok: true, tracks };
+    } catch (err) {
         // A failure partway through a long playlist still returns whatever
         // was read so far rather than throwing it all away.
-        return tracks.length > 0 ? tracks : null;
+        if (tracks.length > 0) return { ok: true, tracks };
+        console.error("SPOTIFY PLAYLIST REQUEST FAILED:", playlistId, err);
+        return { ok: false, reason: "upstream", status: 0 };
     }
 }
 
