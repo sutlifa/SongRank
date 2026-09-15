@@ -30,7 +30,7 @@ export default function AboutPage() {
             </section>
 
             <section className="mb-8">
-                <h2 className="mb-2 text-lg font-semibold">Why Swiss, not a bracket</h2>
+                <h2 className="mb-2 text-lg font-semibold">Why pairwise ratings, not Swiss or a bracket</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
                     A knockout bracket eliminates half the field every round. That finds a winner
                     quickly, but it tells you almost nothing about the rest: a song knocked out in
@@ -38,43 +38,58 @@ export default function AboutPage() {
                     the worst song in the field. Most of your votes end up discarded.
                 </p>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
-                    SongRank uses the <strong className="text-fg">Swiss system</strong> instead, the
-                    same format Magic: The Gathering tournaments use. Every song plays in every
-                    round, and a loss does not eliminate you. Each round you are paired against
-                    another song with a similar record, so the strong songs meet each other near the
-                    top and the rest of the field sorts itself out underneath. That is what makes
-                    the whole list meaningful rather than just the first place.
+                    SongRank used to run on the Swiss system — the same format Magic: The Gathering
+                    tournaments use — and Swiss is a real improvement over a bracket. But it still
+                    isn&apos;t enough, and the reason is arithmetic rather than opinion. Producing a
+                    provably correct order of <em>n</em> items needs at least log&#8322;(n!)
+                    comparisons — that is how many yes/no answers it takes to distinguish between
+                    all the possible orderings of the list. For 256 songs, log&#8322;(256!) ≈ 1,684.
+                    Eight rounds of Swiss on 256 songs is only 8 × 128 = 1,024 comparisons — short of
+                    that floor before you even count that Swiss also <em>wastes</em> comparisons
+                    re-pairing songs whose relative order a smarter system would already treat as
+                    settled.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    The number of rounds is calculated as ceil(log&#8322;n), so 16 songs take 4
-                    rounds and 64 songs take 6. That is the point at which the field can no longer
-                    contain more than one unbeaten song.
+                    SongRank now uses an <strong className="text-fg">adaptive pairwise ranking</strong>{" "}
+                    engine instead. Every song carries a rating and an uncertainty score, both
+                    updated after each vote — a surprising result (an underdog winning) moves a
+                    rating more than an expected one, and a song&apos;s uncertainty shrinks the more
+                    it plays. Rather than following a fixed bracket or round schedule, every single
+                    matchup is chosen fresh: whichever pair currently has the closest ratings and the
+                    most combined uncertainty, because that is the comparison whose answer teaches
+                    the engine the most. A blowout between the best and worst songs on your list
+                    would confirm what the ratings already predict; two closely-matched songs are
+                    where a vote actually moves the needle.
                 </p>
             </section>
 
             <section className="mb-8">
-                <h2 className="mb-2 text-lg font-semibold">Tiebreakers, and why extra rounds happen</h2>
+                <h2 className="mb-2 text-lg font-semibold">How many matchups, and when it stops</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
-                    When your song count is an exact power of two, the unbeaten group halves
-                    cleanly every round and the planned rounds land on exactly one undefeated song.
-                    If you want a tournament that finishes precisely when it says it will, load 8,
-                    16, 32 or 64 songs.
+                    On the build step you pick a depth — <strong className="text-fg">Quick</strong>,{" "}
+                    <strong className="text-fg">Balanced</strong>, or{" "}
+                    <strong className="text-fg">Thorough</strong> (the default), each shown with its
+                    estimated matchup count before you commit. The target scales with your list size
+                    as roughly <code className="rounded bg-bg-soft-2 px-1 py-0.5 text-xs">1.25 × n × log&#8322;n</code>{" "}
+                    matchups at Thorough — about 30 for 8 songs, 480 for 64, 2,560 for the full 256.
+                    A list of 6 songs or fewer just plays every pair once, which is exact and cheaper
+                    than being clever about it.
                 </p>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
-                    Any other count, and the arithmetic stops being tidy. With an odd number in a
-                    group, one song floats down to play someone who has already lost. That float can
-                    leave two unbeaten songs standing, or none at all if the last perfect record
-                    lost on the way down. When that happens SongRank runs extra sudden-death{" "}
-                    <strong className="text-fg">playoff rounds</strong> among the leaders until one
-                    song is left. Those rounds are labelled as playoffs when they appear, so a
-                    tournament that runs slightly long is doing so on purpose.
+                    You are never required to reach that target. The ranking is valid after any
+                    number of votes — stop whenever you want and you still get a complete, ordered
+                    list, it just gets more confident the longer you play. A progress readout shows
+                    what fraction of the current standings are confidently settled, and a small or
+                    lopsided list can finish well before its estimated matchup count once every
+                    adjacent pair in the ranking is clearly separated. A close, evenly-matched list
+                    tends to use its full budget, because that is exactly when more votes keep being
+                    informative.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Final placings are decided by wins first, then by{" "}
-                    <strong className="text-fg">opponent match-win percentage</strong> — the average
-                    strength of everyone you played. Two songs on the same record are separated by
-                    who had the harder road, which is fairer than separating them by luck of the
-                    draw.
+                    Once the main phase ends, the top few contenders play a short extra round robin
+                    against each other — a few more matchups, regardless of list size — so first
+                    place is decided by actually beating the other leading songs head to head, not
+                    inherited from ratings alone.
                 </p>
             </section>
 
@@ -94,12 +109,18 @@ export default function AboutPage() {
             </section>
 
             <section className="mb-10">
-                <h2 className="mb-2 text-lg font-semibold">Accounts are optional</h2>
+                <h2 className="mb-2 text-lg font-semibold">Accounts are optional — saving isn&apos;t</h2>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    Building a list and voting through it works fully without signing in. But saving
+                    and resuming a tournament is a signed-in feature: without an account, your
+                    progress lives only in the current browser tab, and closing or refreshing it
+                    loses your place. A Thorough tournament on a large list is thousands of
+                    matchups, so that is worth knowing before you start, not after — the build page
+                    says so up front if you are not signed in.
+                </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Every part of SongRank works without signing in. Your tournament is kept in your
-                    browser, and it survives a refresh. Signing in with Google adds one thing:
-                    saved history, so a tournament follows you between devices and you can come back
-                    to a finished ranking later. See the{" "}
+                    Signing in with Google adds saved history: a tournament follows you between
+                    devices and you can come back to a finished ranking later. See the{" "}
                     <Link href="/privacy" className="text-accent hover:underline">
                         privacy page
                     </Link>{" "}

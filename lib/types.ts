@@ -40,19 +40,49 @@ export interface Song {
 
 /** A recorded human decision. Votes are the *only* thing we persist about play. */
 export interface Vote {
-    /** The pairing this answered, e.g. "s3-2". Validated on replay. */
+    /** The pairing this answered, e.g. "s3-2" (Swiss) or "m41" / "p2" (adaptive). Validated on replay. */
     pairingId: string;
     winnerId: string;
 }
 
 /**
+ * Which ranking engine produced (and must replay) a tournament's pairings.
+ *
+ * Every tournament saved before this field existed -- in a signed-in user's
+ * database row just as much as a signed-out browser's localStorage -- simply
+ * has no `format` at all. That is why it lives on `Tournament` as optional
+ * rather than required: a reader that treated an absent value as anything
+ * other than "swiss" (throwing, or guessing "adaptive") would either break a
+ * user's saved history outright or replay their old votes against pairing
+ * ids the Swiss engine never generated. `tournamentFormat()` in
+ * lib/tournamentEngine.ts is the one place that default is applied; nowhere
+ * else should read `.format` directly.
+ */
+export type TournamentFormat = "swiss" | "adaptive";
+
+/**
+ * How thoroughly an adaptive tournament ranks its field before moving into
+ * the top-cut playoff -- see lib/ranking.ts's `RANKING_DEPTH_FACTORS`.
+ *
+ * Chosen once, on /new, and carried on the tournament (not recomputed from
+ * the current song count on every load) so that resuming a tournament keeps
+ * the same target it started with. Meaningless, and always absent, on a
+ * "swiss" tournament.
+ */
+export type RankingDepth = "quick" | "balanced" | "thorough";
+
+export const RANKING_DEPTHS: readonly RankingDepth[] = ["quick", "balanced", "thorough"];
+
+/**
  * The saved shape of a tournament.
  *
- * Note what is *not* here: rounds, pairings, standings, the current matchup.
- * Those are all derived (see `derive` in lib/swiss.ts) from the seeded song
- * list plus the vote log, and the derivation is deterministic. That is what
- * makes undo a one-line `votes.pop()`, makes a mid-round refresh safe, and
- * keeps a half-finished tournament small enough to sit in localStorage.
+ * Note what is *not* here: rounds, pairings, standings, the current matchup,
+ * ratings. Those are all derived (see `derive` in lib/swiss.ts for the Swiss
+ * engine and `deriveRanking` in lib/ranking.ts for the adaptive one) from the
+ * seeded song list plus the vote log, and the derivation is deterministic.
+ * That is what makes undo a one-line `votes.pop()`, makes a mid-tournament
+ * refresh safe, and keeps a half-finished tournament small enough to sit in
+ * localStorage.
  */
 export interface Tournament {
     /** Public id, the `[id]` in /t/[id]. Not a database key. */
@@ -61,6 +91,10 @@ export interface Tournament {
     createdAt: string;
     updatedAt: string;
     clipSeconds: ClipSeconds;
+    /** See the TournamentFormat doc comment above -- absent means "swiss". */
+    format?: TournamentFormat;
+    /** Only meaningful when format is "adaptive"; see RankingDepth. */
+    depth?: RankingDepth;
     /** Seed order. Index in this array is the seed, and the final tiebreaker. */
     songs: Song[];
     votes: Vote[];

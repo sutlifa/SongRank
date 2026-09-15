@@ -10,7 +10,7 @@ export default function HomePage() {
                 <p className="mx-auto max-w-xl text-lg leading-relaxed text-fg-muted">
                     Paste a list, search for songs, or import a Spotify playlist. Listen to a clip of
                     each, vote on one matchup at a time, and get a real ranking out the other end —
-                    powered by the same Swiss-tournament pairing used in competitive card games.
+                    every matchup chosen to be the one that teaches the ranking the most.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                     <Link href="/new" className="btn-primary text-base">
@@ -36,7 +36,7 @@ export default function HomePage() {
                 <Step
                     n={3}
                     title="Get a real ranking"
-                    body="A Swiss bracket settles it in a handful of rounds. Export as a playlist, CSV, or plain text."
+                    body="Stop any time and get a valid ranking, or let it settle fully. Export as a playlist, CSV, or plain text."
                 />
             </div>
 

@@ -10,7 +10,7 @@ export const metadata = {
         default: "SongRank",
         template: "%s — SongRank",
     },
-    description: "Rank any list of songs with a head-to-head Swiss tournament, then export the result.",
+    description: "Rank any list of songs with an adaptive head-to-head comparison engine, then export the result.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

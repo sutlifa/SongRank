@@ -20,7 +20,12 @@
 // from our own route would make a real, expected condition look like a bug.
 
 import type { SearchResult } from "./types";
-import { fixtureSearch, fixtureResolve } from "./fixtures";
+// ".ts" extension needed here (a value import, unlike the type-only one
+// above) so this file is directly runnable under node's
+// --experimental-strip-types -- see scripts/verify-parse.ts's optional
+// SONGRANK_PREVIEW_FIXTURES integration check, which imports this module
+// standalone rather than through Next's bundler.
+import { fixtureSearch, fixtureResolve } from "./fixtures.ts";
 
 /** See the top of this file and lib/fixtures.ts for why this switch exists. */
 function fixturesEnabled(): boolean {

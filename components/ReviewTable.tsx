@@ -4,10 +4,12 @@ import type { DraftSong } from "./NewTournament";
 
 /**
  * The editable review step every import path funnels into before a
- * tournament starts. It exists specifically for the ambiguous rows lib/
- * parse.ts flags -- "Artist - Title" and "Title - Artist" are the same
- * string shape, so those rows get a visible swap control instead of a
- * silent guess. See lib/parse.ts's header for the full reasoning.
+ * tournament starts. It exists specifically for the rows lib/parse.ts still
+ * can't confidently resolve after its heuristic, frequency-analysis and
+ * catalogue-lookup passes -- those get a visible swap control instead of a
+ * silent guess. See lib/parse.ts's header for the full reasoning. With all
+ * three passes in play this should be a short list even for a large pasted
+ * batch, not the whole thing.
  */
 export default function ReviewTable({
     songs,
@@ -55,13 +57,13 @@ export default function ReviewTable({
                                     aria-label={`Artist for ${song.title || "song"}`}
                                 />
                                 {/* A swappable guess needs both sides filled in -- an ambiguous
-                                    row with no artist at all (no separator lib/parse.ts could find)
-                                    wasn't guessed from "Artist - Title", it just has nothing in the
-                                    artist field yet, and swapping it would blank the title for
-                                    nothing to show in its place. */}
+                                    row with no artist at all (no separator lib/parse.ts could find,
+                                    or no confident catalogue match) wasn't guessed from a two-sided
+                                    split, it just has nothing in the artist field yet, and swapping
+                                    it would blank the title for nothing to show in its place. */}
                                 {song.ambiguous && song.artist.trim() && (
                                     <p className="mt-1 text-[11px] text-accent">
-                                        Guessed from &quot;Artist - Title&quot; — double check, or swap →
+                                        Not confirmed — double check title and artist, or swap →
                                     </p>
                                 )}
                             </td>

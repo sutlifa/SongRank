@@ -46,7 +46,7 @@ const SongCard = forwardRef<ClipPlayerHandle, Props>(function SongCard(
 
             {rematch && (
                 <p className="rounded-md bg-bg-soft-2 px-2 py-1 text-center text-[11px] text-fg-muted">
-                    These two have already played — no rematch-free pairing was left this round.
+                    These two have already played once — every other pairing worth showing you has too.
                 </p>
             )}
 

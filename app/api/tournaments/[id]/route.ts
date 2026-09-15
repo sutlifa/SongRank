@@ -22,6 +22,8 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
                 createdAt: row.created_at,
                 updatedAt: row.updated_at,
                 clipSeconds: row.clip_seconds,
+                format: row.format,
+                depth: row.depth ?? undefined,
                 songs: row.songs,
                 votes: row.votes,
             },

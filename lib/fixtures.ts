@@ -34,9 +34,11 @@ interface FixtureSong {
 }
 
 /**
- * 16 fixture songs -- enough to seed a real Swiss bracket (plannedRounds(16)
- * = 4 rounds) without repeating a tone. Titles/artists are plainly fake so
- * nobody mistakes fixture data for a real search result.
+ * 16 fixture songs -- enough to seed a real tournament (well past
+ * ROUND_ROBIN_CEILING, so the adaptive engine's pairwise selection actually
+ * runs rather than falling back to a round robin) without repeating a tone.
+ * Titles/artists are plainly fake so nobody mistakes fixture data for a real
+ * search result.
  */
 export const FIXTURE_SONGS: FixtureSong[] = [
     { id: "fx-1", title: "Amber Static", artist: "The Faux Tones", album: "Test Pressing", freq: 220, wave: "sine" },
@@ -73,13 +75,27 @@ function toSearchResult(song: FixtureSong): SearchResult {
     };
 }
 
-/** Fixture stand-in for a GET /api/songs/search?term=... call. */
+/**
+ * Fixture stand-in for a GET /api/songs/search?term=... call.
+ *
+ * The containment check runs both ways: `title.includes(q)` is what makes a
+ * short, typed-as-you-go query match ("amber" -> "Amber Static"), and
+ * `q.includes(title)` is what makes a *long* query match -- specifically the
+ * whole-raw-pasted-line searches lib/parse.ts's `resolveImportBatch` does
+ * ("Amber Static - The Faux Tones" contains the fixture's title and artist
+ * as substrings, even though the fixture's title doesn't contain the whole
+ * line). A real Apple Music search handles both shapes via relevance
+ * ranking; this fixture is a much dumber stand-in, so both directions are
+ * spelled out explicitly.
+ */
 export function fixtureSearch(term: string): SearchResult[] {
     const q = term.trim().toLowerCase();
     if (!q) return FIXTURE_SONGS.slice(0, 8).map(toSearchResult);
-    return FIXTURE_SONGS.filter(
-        (s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)
-    ).map(toSearchResult);
+    return FIXTURE_SONGS.filter((s) => {
+        const title = s.title.toLowerCase();
+        const artist = s.artist.toLowerCase();
+        return title.includes(q) || artist.includes(q) || q.includes(title) || q.includes(artist);
+    }).map(toSearchResult);
 }
 
 /**

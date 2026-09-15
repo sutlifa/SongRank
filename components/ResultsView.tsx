@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { derive, recordLabel } from "@/lib/swiss";
+import { deriveTournament } from "@/lib/tournamentEngine";
 import SongArt from "./SongArt";
 import ClipPlayer from "./ClipPlayer";
 import ExportPanel from "./ExportPanel";
@@ -22,7 +22,7 @@ export default function ResultsView({
     const { tournament, resolved, sync } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
-    const derived = useMemo(() => (tournament ? derive(tournament) : null), [tournament]);
+    const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
 
     // Results only make sense once a champion has actually been decided --
     // an in-progress tournament belongs back on the matchup screen.
@@ -112,7 +112,7 @@ export default function ResultsView({
                                             {song.artist || "Unknown artist"}
                                         </p>
                                         <p className="mt-0.5 font-mono text-xs text-fg-muted">
-                                            {recordLabel(standing)} · {(standing.omw * 100).toFixed(0)}% OMW
+                                            {standing.recordLabel} · {standing.detailLabel}
                                         </p>
                                     </div>
                                 </div>

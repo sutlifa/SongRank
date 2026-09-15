@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { derive, recordVote, undoLastVote } from "@/lib/swiss";
+import { deriveTournament, recordVote, undoLastVote } from "@/lib/tournamentEngine";
 import SongCard from "./SongCard";
 import type { ClipPlayerHandle } from "./ClipPlayer";
 import StandingsPeek from "./StandingsPeek";
@@ -41,7 +41,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
 
     const undo = useCallback(() => updateTournament((t) => undoLastVote(t)), [updateTournament]);
 
-    const derived = useMemo(() => (tournament ? derive(tournament) : null), [tournament]);
+    const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
 
     // A tournament that's already finished (resumed from a link, or the last
     // vote just landed) belongs on the results page, not the matchup screen.
@@ -94,7 +94,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
             const target = e.target as HTMLElement | null;
             if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
 
-            const { pairing } = derived.current;
+            const current = derived.current;
             const key = e.key.toLowerCase();
             if (key === "a") {
                 e.preventDefault();
@@ -104,10 +104,10 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                 rightPlayerRef.current?.playClip();
             } else if (e.key === "ArrowLeft") {
                 e.preventDefault();
-                vote(pairing.id, pairing.a);
-            } else if (e.key === "ArrowRight" && pairing.b) {
+                vote(current.pairingId, current.a);
+            } else if (e.key === "ArrowRight") {
                 e.preventDefault();
-                vote(pairing.id, pairing.b);
+                vote(current.pairingId, current.b);
             }
         }
         window.addEventListener("keydown", onKeyDown);
@@ -160,7 +160,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                 <h1 className="truncate text-xl font-bold sm:text-2xl">{tournament.name}</h1>
                 {current && (
                     <p className="mt-1 text-sm text-fg-muted">
-                        {current.round.label} · Matchup {current.numberInRound} of {current.matchupsInRound}
+                        {current.label} · Matchup {current.numberInRound} of {current.matchupsInRound}
                     </p>
                 )}
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-soft-2">
@@ -173,13 +173,14 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                     {derived.matchupsPlayed} of{" "}
                     {derived.inPlayoffs ? `at least ${derived.matchupsPlanned}` : derived.matchupsPlanned}{" "}
                     matchups played
+                    {derived.confidence !== null && ` · ranking is ${Math.round(derived.confidence * 100)}% settled`}
                 </p>
             </header>
 
-            {current?.round.note && (
+            {current?.note && (
                 <div className="mb-6 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-fg">
-                    <span className="font-semibold text-accent">{current.round.label}: </span>
-                    {current.round.note}
+                    <span className="font-semibold text-accent">{current.label}: </span>
+                    {current.note}
                 </div>
             )}
 
@@ -189,22 +190,22 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                         <SongCard
                             ref={leftPlayerRef}
                             side="A"
-                            song={songById.get(current.pairing.a)!}
+                            song={songById.get(current.a)!}
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
-                            onVote={() => vote(current.pairing.id, current.pairing.a)}
-                            rematch={current.pairing.isRematch}
-                            key={`${current.pairing.id}-a`}
+                            onVote={() => vote(current.pairingId, current.a)}
+                            rematch={current.isRematch}
+                            key={`${current.pairingId}-a`}
                         />
                         <SongCard
                             ref={rightPlayerRef}
                             side="B"
-                            song={songById.get(current.pairing.b!)!}
+                            song={songById.get(current.b)!}
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
-                            onVote={() => vote(current.pairing.id, current.pairing.b!)}
-                            rematch={current.pairing.isRematch}
-                            key={`${current.pairing.id}-b`}
+                            onVote={() => vote(current.pairingId, current.b)}
+                            rematch={current.isRematch}
+                            key={`${current.pairingId}-b`}
                         />
                     </div>
 

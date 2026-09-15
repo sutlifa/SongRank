@@ -28,9 +28,11 @@ export default function PrivacyPage() {
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">If you do not sign in</h2>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Nothing about your tournament is stored on our servers. Your song list and your
-                    votes are kept in your own browser&apos;s local storage, on that device only.
-                    Clearing your browser data deletes them, and we never had a copy.
+                    Nothing about your tournament is stored at all, on our servers or in your
+                    browser. Your song list and votes live only in memory for as long as the browser
+                    tab stays open — closing or refreshing it loses them, and we never had a copy.
+                    Save and resume is a signed-in feature by design (see below), and the build page
+                    says so before you start a tournament without one.
                 </p>
             </section>
 

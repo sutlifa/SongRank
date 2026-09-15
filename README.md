@@ -1,8 +1,10 @@
 # SongRank
 
 Turn a list of songs into a ranked list by comparing them two at a time, with a short
-audio clip of each to jog your memory. Pairing uses the Swiss tournament system, so every
-song keeps playing every round and the whole list ends up ranked — not just the winner.
+audio clip of each to jog your memory. An adaptive pairwise ranking engine picks each
+matchup to be the one whose outcome teaches it the most, so the whole list ends up
+ranked — not just the winner — using far fewer comparisons than a fixed bracket or
+round schedule would need.
 
 **Live:** https://song-rankings.vercel.app
 
@@ -17,36 +19,55 @@ song keeps playing every round and the whole list ends up ranked — not just th
   starting a quarter of the way in (the most chorus-likely stretch). Length is adjustable;
   tracks with no preview stay fully votable.
 - **Keyboard driven** — `A` / `B` play a clip, `←` / `→` vote. Undo any vote.
-- **Survives a refresh** — signed out, the tournament lives in your browser; signed in, it
-  follows you between devices.
+- **Stop any time** — the ranking is valid after any number of votes; a progress readout
+  shows how settled it is, and a small or lopsided list can finish before its estimated
+  matchup count.
+- **Save and resume — signed-in only** — save/resume needs a Google account by product
+  decision; a signed-out tournament lives only in the current browser tab. The build page
+  warns about this prominently before you start, since a large Thorough tournament is
+  thousands of matchups.
 - **Export** — copy as text, CSV, JSON, or push the ranking straight to a new Spotify
   playlist.
 
 ## How the ranking works
 
 A knockout bracket eliminates half the field each round, so most votes tell you nothing
-about final placing — a song beaten by the eventual champion in round one ranks no higher
-than one beaten by the worst song in the field.
+about final placing. Swiss (the format SongRank used to run on, the same one Magic: The
+Gathering tournaments use) is a real improvement — every song plays every round instead of
+being eliminated — but it still falls short of what a full, provably correct ranking needs.
+Producing a correct total order of *n* items needs at least log₂(n!) comparisons (that many
+yes/no answers to distinguish between every possible ordering): **≈1,684 for 256 songs**.
+Eight Swiss rounds on 256 songs is only 8 × 128 = **1,024** comparisons — under the floor
+before counting that Swiss also *wastes* comparisons re-pairing songs whose order a smarter
+system would already treat as settled.
 
-SongRank uses the **Swiss system** (as in Magic: The Gathering tournaments) instead:
+SongRank now uses an **adaptive pairwise ranking** engine instead:
 
-- Every song plays every round. A loss does not eliminate you.
-- Each round pairs you against a song on a similar record, so contenders meet near the top
-  while the rest of the field sorts itself out underneath.
-- Rounds are `ceil(log₂(n))` — 16 songs → 4 rounds, 64 songs → 6.
-- Rematches are avoided by a backtracking search over each score group. With an odd field,
-  the bye goes to the **lowest**-standing song that has not had one, specifically so it
-  cannot manufacture extra unbeaten records.
-- Final order is wins, then **opponent match-win percentage** (each opponent floored at
-  33%, byes excluded), then head-to-head, then seed.
+- Every song carries a rating (Elo-style, starting at 1500) and an uncertainty score that
+  shrinks as it plays more matchups. A surprising result moves a rating more than an
+  expected one — the update's learning rate is scaled by the song's own current
+  uncertainty, so a nearly-untested song can swing a lot on one result and a
+  well-established one barely moves.
+- Every matchup is picked fresh: whichever unplayed pair has the closest ratings and the
+  most combined uncertainty, because that comparison carries the most information.
+  Candidates are found in a bounded neighbourhood of the rating-sorted field rather than by
+  scanning every possible pair, so this stays fast even at 256 songs. Repeat pairings are
+  avoided until the whole pool of pairs has been exhausted.
+- **Budget scales with list size:** roughly `1.25 × n × log₂(n)` matchups at the default
+  Thorough depth — about 30 for 8 songs, 200 for 32, 2,560 for the full 256 — always above
+  the log₂(n!) floor. Quick and Balanced trade some of that precision for a shorter
+  session; the estimated count for each is shown before you commit. A field of 6 songs or
+  fewer just plays every pair once — exact, and cheaper than being clever about it.
+- **Anytime and early stop:** the ranking is valid after any number of votes, and a field
+  where every adjacent pair in the standings is already clearly separated finishes before
+  its estimated budget rather than grinding through it.
+- **Decisive #1:** once the main phase ends, the leading few songs play a short extra round
+  robin against each other so first place is earned by beating the other top contenders
+  head to head, not just inherited from ratings.
 
-**On exact round counts:** when `n` is a power of two the unbeaten group halves cleanly and
-the planned rounds land on exactly one undefeated song every time. Otherwise the odd song
-out floats down against someone who already lost, which can leave two unbeaten songs — or
-none, if the last perfect record lost on the float. SongRank then runs sudden-death
-**playoff rounds** among the leaders until one remains. Simulation puts the overrun at
-roughly one extra round for a field like 40 or 100. Load 8, 16, 32 or 64 songs if you want
-the round count to be exact.
+Tournaments saved before this change keep replaying through the Swiss engine exactly as
+they always did — a tournament's format is fixed at creation and never silently
+reinterpreted (see `Tournament.format` in `lib/types.ts`).
 
 ## Tech
 
@@ -101,12 +122,21 @@ recomputed from those on every load.
 npm run lint
 npm run typecheck
 npm run build
+node --experimental-strip-types scripts/verify-ranking.ts
 node --experimental-strip-types scripts/verify-swiss.ts
 ```
 
-`verify-swiss.ts` plays out tournaments across n = 2..64 under several voting policies and
-asserts the invariants that matter: correct round counts, no duplicate pairings within a
-round, every song paired at most once per round, at most one bye per song, and exactly one
+`verify-ranking.ts` is the adaptive engine's proof: it plays tournaments across a spread of
+sizes up to n = 256 (the true ceiling) under several voting policies and checks that
+matchup counts track the budget formula, no pairing repeats before the pool is exhausted, a
+lopsided field settles early, and — the check that actually proves the ranking works rather
+than merely runs — a seeded true order under low-noise voting produces a final ranking that
+correlates strongly with it.
+
+`verify-swiss.ts` is kept for the legacy engine, which still has to replay tournaments saved
+before the adaptive engine existed: it plays tournaments across n = 2..64 under several
+voting policies and asserts correct round counts, no duplicate pairings within a round,
+every song paired at most once per round, at most one bye per song, and exactly one
 undefeated champion at the end.
 
 ## Licence

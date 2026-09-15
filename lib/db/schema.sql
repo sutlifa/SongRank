@@ -27,11 +27,28 @@ CREATE TABLE IF NOT EXISTS tournaments (
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name          TEXT NOT NULL,
   clip_seconds  SMALLINT NOT NULL DEFAULT 15,
+  -- Which engine built this tournament's pairings -- 'swiss' (lib/swiss.ts)
+  -- or 'adaptive' (lib/ranking.ts). Defaults to 'swiss' so a row written
+  -- before this column existed keeps replaying through the engine it was
+  -- actually played under; see lib/types.ts's TournamentFormat comment.
+  format        TEXT NOT NULL DEFAULT 'swiss',
+  -- Only meaningful when format = 'adaptive'; null for every 'swiss' row,
+  -- including every row that predates this column.
+  depth         TEXT,
   songs         JSONB NOT NULL,
   votes         JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- `CREATE TABLE IF NOT EXISTS` only helps a table that doesn't exist yet --
+-- every production deployment before this feature already has `tournaments`
+-- without these two columns, so they need adding explicitly for the same
+-- "safe to re-run" guarantee the rest of this file has. The DEFAULT here
+-- matches the one on the table definition above for the same reason: an
+-- existing row with no format is a Swiss tournament, full stop.
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'swiss';
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS depth TEXT;
 
 -- The `id` primary key doubles as the public /t/[id] slug (see Tournament.id
 -- in lib/types.ts), generated client-side with crypto.randomUUID() before

@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { sql } from "./db";
-import type { Song, Vote, ClipSeconds } from "./types";
+import type { Song, Vote, ClipSeconds, RankingDepth, TournamentFormat } from "./types";
 
 /**
  * Tournament persistence for signed-in users.
@@ -16,6 +16,8 @@ export interface TournamentSummary {
     id: string;
     name: string;
     clip_seconds: ClipSeconds;
+    format: TournamentFormat;
+    depth: RankingDepth | null;
     songs: number;
     votes: number;
     updated_at: string;
@@ -25,6 +27,8 @@ export interface TournamentRow {
     id: string;
     name: string;
     clip_seconds: ClipSeconds;
+    format: TournamentFormat;
+    depth: RankingDepth | null;
     songs: Song[];
     votes: Vote[];
     created_at: string;
@@ -36,6 +40,8 @@ export async function listTournaments(userId: number): Promise<TournamentSummary
         SELECT id,
                name,
                clip_seconds,
+               format,
+               depth,
                jsonb_array_length(songs) AS songs,
                jsonb_array_length(votes) AS votes,
                updated_at
@@ -48,7 +54,7 @@ export async function listTournaments(userId: number): Promise<TournamentSummary
 
 export async function getTournament(userId: number, id: string): Promise<TournamentRow | null> {
     const rows = await sql<TournamentRow[]>`
-        SELECT id, name, clip_seconds, songs, votes, created_at, updated_at
+        SELECT id, name, clip_seconds, format, depth, songs, votes, created_at, updated_at
         FROM tournaments
         WHERE id = ${id} AND user_id = ${userId}
     `;
@@ -70,22 +76,28 @@ export async function saveTournament(args: {
     id: string;
     name: string;
     clipSeconds: ClipSeconds;
+    format: TournamentFormat;
+    depth: RankingDepth | null;
     songs: Song[];
     votes: Vote[];
 }): Promise<void> {
     await sql`
-        INSERT INTO tournaments (id, user_id, name, clip_seconds, songs, votes)
+        INSERT INTO tournaments (id, user_id, name, clip_seconds, format, depth, songs, votes)
         VALUES (
             ${args.id},
             ${args.userId},
             ${args.name},
             ${args.clipSeconds},
+            ${args.format},
+            ${args.depth},
             ${sql.json(args.songs as unknown as postgres.JSONValue)},
             ${sql.json(args.votes as unknown as postgres.JSONValue)}
         )
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           clip_seconds = EXCLUDED.clip_seconds,
+          format = EXCLUDED.format,
+          depth = EXCLUDED.depth,
           songs = EXCLUDED.songs,
           votes = EXCLUDED.votes,
           updated_at = now()

@@ -2,23 +2,65 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MAX_SONGS, describePlan } from "@/lib/swiss";
-import { CLIP_SECONDS, type ClipSeconds, type Song, type Tournament } from "@/lib/types";
+import Link from "next/link";
+import { MAX_SONGS } from "@/lib/swiss";
+import { describeRankingPlan, estimateMatchups, ROUND_ROBIN_CEILING } from "@/lib/ranking";
+import { CLIP_SECONDS, RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
 import { saveLocalTournament } from "@/lib/localTournaments";
+import { setSessionTournament } from "@/lib/sessionCache";
+import SessionStatus from "./SessionStatus";
 import PasteImportTab from "./PasteImportTab";
 import SearchImportTab from "./SearchImportTab";
 import SpotifyImportTab from "./SpotifyImportTab";
 import ReviewTable from "./ReviewTable";
+import PreflightCheck from "./PreflightCheck";
+
+const DEPTH_LABELS: Record<RankingDepth, string> = { quick: "Quick", balanced: "Balanced", thorough: "Thorough" };
+const DEPTH_HINTS: Record<RankingDepth, string> = {
+    quick: "Fastest ranking, least precise on close calls.",
+    balanced: "A middle ground between speed and precision.",
+    thorough: "Most reliable ranking. Recommended — this is the default for a reason.",
+};
+
+/**
+ * The "save and resume needs an account" warning, shown before a signed-out
+ * (or auth-unconfigured) visitor commits to a tournament -- product decision,
+ * see AGENT-TEAM.md and CLAUDE.md's Ranking engine section: "save and resume
+ * should only work on signed in users." Thorough on a large list is
+ * thousands of matchups, so losing that progress on a refresh is a real cost,
+ * not a footnote -- this has to be prominent, not buried, which is the whole
+ * reason the restriction is acceptable at all.
+ */
+function GuestSaveWarning({ authEnabled }: { authEnabled: boolean }) {
+    return (
+        <div className="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-fg">
+            <p className="font-semibold text-accent">Your progress won&apos;t be saved.</p>
+            <p className="mt-1 text-fg-muted">
+                {authEnabled
+                    ? "You're not signed in, so this tournament lives only in this browser tab — closing or refreshing it loses your place, however many matchups in you are."
+                    : "This deployment doesn't have sign-in set up, so no tournament can be saved here — it lives only in this browser tab until you close it."}
+            </p>
+            {authEnabled && (
+                <Link href="/signin?callbackUrl=/new" className="btn-secondary mt-2 inline-block !px-3 !py-1.5 text-xs">
+                    Sign in to save your progress
+                </Link>
+            )}
+        </div>
+    );
+}
 
 /**
  * A song mid-import, before it's a real `Song`. The three import tabs
  * (paste/search/Spotify) all produce these; the review table lets a human
- * edit them; `startTournament` below turns the finished list into `Song[]`.
+ * edit them; `proceedToPreflight` below turns the finished list into
+ * `Song[]` and hands off to the pre-flight check.
  *
  * `resolved` is `null` for anything that still needs an iTunes lookup
- * (pasted or Spotify-imported songs) and already-filled for anything search
- * added directly (it came from iTunes already). Keeping this distinction is
- * what lets `startTournament` skip re-resolving songs that don't need it.
+ * (pasted or Spotify-imported songs, or a paste-imported song the catalogue
+ * lookup in PasteImportTab couldn't confidently match) and already-filled
+ * for anything that came with artwork/preview already attached (a search
+ * result, or a high-confidence paste match). Keeping this distinction is
+ * what lets `proceedToPreflight` skip re-resolving songs that don't need it.
  */
 export interface DraftSong {
     id: string;
@@ -30,6 +72,23 @@ export interface DraftSong {
 }
 
 type Tab = "paste" | "search" | "spotify";
+
+/** The two steps of /new: build the list, then the pre-flight check (problem 2) before a tournament can start. */
+type Step = "build" | "preflight";
+
+/** Turns a resolved draft into the real, savable `Song` shape. Pulled out of `proceedToPreflight` so it's one place, not a copy living in both the "just resolved" path and any future re-derivation. */
+function draftToSong(d: DraftSong): Song {
+    return {
+        id: d.id,
+        title: d.title.trim(),
+        artist: d.artist.trim(),
+        artworkUrl: d.resolved?.artworkUrl ?? null,
+        previewUrl: d.resolved?.previewUrl ?? null,
+        previewSeconds: d.resolved?.previewSeconds ?? null,
+        spotifyUri: d.spotifyUri,
+        previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
+    };
+}
 
 /** Resolves a batch of draft songs against iTunes with bounded concurrency. */
 async function resolvePreviews(
@@ -70,14 +129,47 @@ async function resolvePreviews(
     return drafts.map((d) => (resolvedById.has(d.id) ? { ...d, resolved: resolvedById.get(d.id)! } : d));
 }
 
-export default function NewTournament({ spotifyImportEnabled }: { spotifyImportEnabled: boolean }) {
+export default function NewTournament({
+    spotifyImportEnabled,
+    authEnabled,
+}: {
+    spotifyImportEnabled: boolean;
+    authEnabled: boolean;
+}) {
     const router = useRouter();
     const [tab, setTab] = useState<Tab>("paste");
     const [songs, setSongs] = useState<DraftSong[]>([]);
     const [name, setName] = useState("");
     const [clipSeconds, setClipSeconds] = useState<ClipSeconds>(15);
+    /** Thorough is the default -- the user's own choice, see CLAUDE.md's
+     * Ranking engine section -- and only matters once the field is big enough
+     * that the engine isn't already doing a full round robin regardless
+     * (n <= ROUND_ROBIN_CEILING plays every pair once no matter what). */
+    const [depth, setDepth] = useState<RankingDepth>("thorough");
     const [starting, setStarting] = useState<{ done: number; total: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [step, setStep] = useState<Step>("build");
+    const [preflightSongs, setPreflightSongs] = useState<Song[]>([]);
+    /** True only for the brief window between the pre-flight "Start tournament" click and the redirect -- there's no network wait here (saving is local-first), but a double-click shouldn't queue two saves. */
+    const [launching, setLaunching] = useState(false);
+    /** Whether *this visitor* is actually signed in -- not the same as
+     * `authEnabled`, which only says the deployment supports it. Determined
+     * by SessionStatus (see that component's header for why this component
+     * can't call `useSession()` itself) and used both to decide whether to
+     * persist the tournament at all (see confirmStart) and to show the
+     * "your progress won't be saved" warning below. Starts false so a
+     * guest's tournament is never optimistically saved before we actually
+     * know -- see loading's own gate in GuestSaveWarning's caller. */
+    const [signedIn, setSignedIn] = useState(false);
+    const [authLoading, setAuthLoading] = useState(authEnabled);
+    const sessionStatus = authEnabled ? (
+        <SessionStatus
+            onChange={(nextSignedIn, loading) => {
+                setSignedIn(nextSignedIn);
+                setAuthLoading(loading);
+            }}
+        />
+    ) : null;
 
     function addSongs(incoming: DraftSong[]) {
         setSongs((prev) => {
@@ -103,9 +195,18 @@ export default function NewTournament({ spotifyImportEnabled }: { spotifyImportE
         setSongs((prev) => prev.filter((s) => s.id !== id));
     }
 
-    async function startTournament() {
+    /**
+     * "Continue" on the build step: resolves previews (same network pass as
+     * before) and hands off to the pre-flight check -- see PreflightCheck's
+     * own header for why that's a second view of this component's state
+     * rather than a second route. The tournament itself isn't created here;
+     * it's only ever created by `confirmStart`, once the user has actually
+     * looked at the pre-flight screen. That's what makes "the tournament
+     * must not be startable without passing through it" (problem 2) true by
+     * construction rather than by convention.
+     */
+    async function proceedToPreflight() {
         setError(null);
-        const trimmedName = name.trim() || "My songs";
         const cleanSongs = songs.filter((s) => s.title.trim());
         if (cleanSongs.length < 2) {
             setError("Add at least 2 songs to start a tournament.");
@@ -114,18 +215,33 @@ export default function NewTournament({ spotifyImportEnabled }: { spotifyImportE
 
         setStarting({ done: 0, total: cleanSongs.length });
         const resolved = await resolvePreviews(cleanSongs, (done, total) => setStarting({ done, total }));
+        setStarting(null);
 
-        const finalSongs: Song[] = resolved.map((d) => ({
-            id: crypto.randomUUID(),
-            title: d.title.trim(),
-            artist: d.artist.trim(),
-            artworkUrl: d.resolved?.artworkUrl ?? null,
-            previewUrl: d.resolved?.previewUrl ?? null,
-            previewSeconds: d.resolved?.previewSeconds ?? null,
-            spotifyUri: d.spotifyUri,
-            previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
-        }));
+        // Cache the resolution back onto the draft list (keyed by the
+        // draft's own stable id) so going back to "build" and forward again
+        // doesn't re-resolve songs that already have an answer.
+        setSongs((prev) => {
+            const byId = new Map(resolved.map((d) => [d.id, d]));
+            return prev.map((d) => byId.get(d.id) ?? d);
+        });
 
+        // Merge, don't replace: a song already customized on the pre-flight
+        // screen (replaced via search, or removed) keeps that edit even if
+        // the user goes back to add more and returns here. A song that's
+        // gone from `resolved` (removed back on the build step) is dropped
+        // here too, for the same reason.
+        const asSongs = resolved.map(draftToSong);
+        setPreflightSongs((prev) => {
+            const prevById = new Map(prev.map((s) => [s.id, s]));
+            return asSongs.map((s) => prevById.get(s.id) ?? s);
+        });
+        setStep("preflight");
+    }
+
+    /** The pre-flight screen's own "Start tournament" -- this is the only place a Tournament actually gets created. */
+    function confirmStart(finalSongs: Song[]) {
+        setLaunching(true);
+        const trimmedName = name.trim() || "My songs";
         const now = new Date().toISOString();
         const tournament: Tournament = {
             id: crypto.randomUUID(),
@@ -133,38 +249,83 @@ export default function NewTournament({ spotifyImportEnabled }: { spotifyImportE
             createdAt: now,
             updatedAt: now,
             clipSeconds,
+            format: "adaptive",
+            depth,
             songs: finalSongs,
             votes: [],
         };
 
-        saveLocalTournament(tournament);
+        // Always: the in-tab handoff to /t/[id] -- see lib/sessionCache.ts's
+        // header for why this isn't persistence and is therefore safe for a
+        // guest too.
+        setSessionTournament(tournament);
 
-        // Best-effort head start on saved history: if nobody's signed in, or
-        // there's no database configured, the server route politely 401s/
-        // 503s this and localStorage is already the source of truth either
-        // way -- see lib/auth-guard.ts and TournamentServerSync, which takes
-        // over autosaving from here once the player screen mounts.
-        fetch("/api/tournaments", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: tournament.id,
-                name: tournament.name,
-                clipSeconds: tournament.clipSeconds,
-                songs: tournament.songs,
-                votes: tournament.votes,
-            }),
-        }).catch(() => {});
+        // Only for an actually signed-in visitor: the durable copies. A
+        // guest gets neither -- not even a best-effort attempt -- per the
+        // product decision described in GuestSaveWarning above; the
+        // /api/tournaments route would 401 them anyway (see
+        // lib/auth-guard.ts), but skipping the call entirely is what makes
+        // "no persistence" true rather than "no persistence, except one
+        // wasted request."
+        if (signedIn) {
+            saveLocalTournament(tournament);
+            fetch("/api/tournaments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: tournament.id,
+                    name: tournament.name,
+                    clipSeconds: tournament.clipSeconds,
+                    format: tournament.format,
+                    depth: tournament.depth,
+                    songs: tournament.songs,
+                    votes: tournament.votes,
+                }),
+            }).catch(() => {});
+        }
 
         router.push(`/t/${tournament.id}`);
     }
 
+    if (step === "preflight") {
+        return (
+            <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
+                {sessionStatus}
+                <h1 className="mb-1 text-xl font-bold sm:text-2xl">Check before you start</h1>
+                <p className="mb-6 text-sm text-fg-muted">
+                    Every song, with its clip if it has one -- confirm the audio is right before committing to a
+                    full tournament.
+                </p>
+                {!authLoading && !signedIn && (
+                    <div className="mb-6">
+                        <GuestSaveWarning authEnabled={authEnabled} />
+                    </div>
+                )}
+                <PreflightCheck
+                    songs={preflightSongs}
+                    clipSeconds={clipSeconds}
+                    onChange={setPreflightSongs}
+                    onBack={() => setStep("build")}
+                    onStart={() => confirmStart(preflightSongs)}
+                    starting={launching}
+                />
+            </div>
+        );
+    }
+
     return (
         <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
+            {sessionStatus}
             <h1 className="mb-1 text-xl font-bold sm:text-2xl">Build your tournament</h1>
             <p className="mb-6 text-sm text-fg-muted">
                 Add songs from any combination of the tabs below, then review and start.
             </p>
+
+            {!authLoading && !signedIn && (
+                <div className="mb-6">
+                    <GuestSaveWarning authEnabled={authEnabled} />
+                </div>
+            )}
 
             <div className="card p-4 sm:p-5">
                 <div className="mb-4 flex gap-1 border-b border-border pb-3">
@@ -230,7 +391,43 @@ export default function NewTournament({ spotifyImportEnabled }: { spotifyImportE
                     </label>
                 </div>
 
-                <p className="text-sm text-fg-muted">{describePlan(songs.length)}</p>
+                {songs.length > ROUND_ROBIN_CEILING ? (
+                    <div>
+                        <span className="mb-2 block text-xs font-medium text-fg-muted">
+                            Ranking depth
+                        </span>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                            {RANKING_DEPTHS.map((d) => (
+                                <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => setDepth(d)}
+                                    aria-pressed={depth === d}
+                                    className={`rounded-lg border p-3 text-left transition-colors ${
+                                        depth === d
+                                            ? "border-accent bg-accent/10"
+                                            : "border-border hover:bg-bg-soft-2"
+                                    }`}
+                                >
+                                    <span className="block text-sm font-semibold">{DEPTH_LABELS[d]}</span>
+                                    <span className="mt-0.5 block text-xs text-fg-muted">
+                                        ~{estimateMatchups(songs.length, d).toLocaleString()} matchups
+                                    </span>
+                                    <span className="mt-1 block text-xs text-fg-muted">{DEPTH_HINTS[d]}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ) : (
+                    songs.length >= 2 && (
+                        <p className="text-xs text-fg-muted">
+                            {songs.length} songs is small enough for a full round robin -- every pair plays once,
+                            so ranking depth doesn&apos;t change anything here.
+                        </p>
+                    )
+                )}
+
+                <p className="text-sm text-fg-muted">{describeRankingPlan(songs.length, depth)}</p>
 
                 {error && (
                     <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -240,11 +437,11 @@ export default function NewTournament({ spotifyImportEnabled }: { spotifyImportE
 
                 <button
                     type="button"
-                    onClick={startTournament}
+                    onClick={proceedToPreflight}
                     disabled={Boolean(starting)}
                     className="btn-primary w-full text-base"
                 >
-                    {starting ? `Finding clips… ${starting.done}/${starting.total}` : "Start tournament"}
+                    {starting ? `Finding clips… ${starting.done}/${starting.total}` : "Continue"}
                 </button>
             </div>
         </div>
