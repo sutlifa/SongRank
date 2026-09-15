@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Analytics } from "@vercel/analytics/next";
 import Providers from "@/components/Providers";
+import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
 import { isAuthConfigured } from "@/lib/authConfig";
 
@@ -17,10 +18,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
     return (
         <html lang="en">
-            <body className="min-h-screen bg-bg text-fg">
+            {/* Flex column with a growing <main> so the footer sits at the
+                bottom of the viewport on short pages (/signin, an empty
+                /history) instead of floating halfway up with blank space
+                under it. `min-h-screen` alone only guarantees the body is
+                tall enough -- it says nothing about where the last child
+                lands inside it. */}
+            <body className="flex min-h-screen flex-col bg-bg text-fg">
                 <Providers authEnabled={authEnabled}>
                     <SiteHeader authEnabled={authEnabled} />
-                    <main>{children}</main>
+                    <main className="flex-1">{children}</main>
+                    <SiteFooter />
                 </Providers>
                 <Analytics />
             </body>

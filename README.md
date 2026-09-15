@@ -1,83 +1,114 @@
 # SongRank
 
-Rank any list of songs against each other. Paste a list, search for songs
-one by one, or import a Spotify playlist link. Listen to a short clip of
-each song, vote on one head-to-head matchup at a time, and get a real,
-tiebreak-resolved ranking out the other end — powered by a Swiss-tournament
-pairing engine (the same style used in competitive card games), not a bare
-sort.
+Turn a list of songs into a ranked list by comparing them two at a time, with a short
+audio clip of each to jog your memory. Pairing uses the Swiss tournament system, so every
+song keeps playing every round and the whole list ends up ranked — not just the winner.
 
-Every core feature works with **zero configuration and no account**: paste
-or search for songs, play a full tournament, see the results, and export as
-text/CSV/JSON. Each environment variable below unlocks exactly one
-additional feature on top of that; nothing is required to run the app.
+**Live:** https://song-rankings.vercel.app
 
-## Running it
+## Features
+
+- **Load songs three ways** — paste a list, search for them one by one, or import a public
+  Spotify playlist.
+- **Tolerant pasting** — handles `Artist - Title`, `Title - Artist`, `Title by Artist`,
+  `Title, Artist`, numbered and bulleted lists, quotes and duplicates. Ambiguous rows get
+  an editable review step instead of a silent guess.
+- **Preview clips** — a 15-second window from each track's 30-second iTunes preview,
+  starting a quarter of the way in (the most chorus-likely stretch). Length is adjustable;
+  tracks with no preview stay fully votable.
+- **Keyboard driven** — `A` / `B` play a clip, `←` / `→` vote. Undo any vote.
+- **Survives a refresh** — signed out, the tournament lives in your browser; signed in, it
+  follows you between devices.
+- **Export** — copy as text, CSV, JSON, or push the ranking straight to a new Spotify
+  playlist.
+
+## How the ranking works
+
+A knockout bracket eliminates half the field each round, so most votes tell you nothing
+about final placing — a song beaten by the eventual champion in round one ranks no higher
+than one beaten by the worst song in the field.
+
+SongRank uses the **Swiss system** (as in Magic: The Gathering tournaments) instead:
+
+- Every song plays every round. A loss does not eliminate you.
+- Each round pairs you against a song on a similar record, so contenders meet near the top
+  while the rest of the field sorts itself out underneath.
+- Rounds are `ceil(log₂(n))` — 16 songs → 4 rounds, 64 songs → 6.
+- Rematches are avoided by a backtracking search over each score group. With an odd field,
+  the bye goes to the **lowest**-standing song that has not had one, specifically so it
+  cannot manufacture extra unbeaten records.
+- Final order is wins, then **opponent match-win percentage** (each opponent floored at
+  33%, byes excluded), then head-to-head, then seed.
+
+**On exact round counts:** when `n` is a power of two the unbeaten group halves cleanly and
+the planned rounds land on exactly one undefeated song every time. Otherwise the odd song
+out floats down against someone who already lost, which can leave two unbeaten songs — or
+none, if the last perfect record lost on the float. SongRank then runs sudden-death
+**playoff rounds** among the leaders until one remains. Simulation puts the overrun at
+roughly one extra round for a field like 40 or 100. Load 8, 16, 32 or 64 songs if you want
+the round count to be exact.
+
+## Tech
+
+Next.js 16 (App Router) · React 19 · TypeScript (strict) · Tailwind v4 · Auth.js v5
+(Google) · Neon Postgres · deployed on Vercel.
+
+## Running locally
 
 ```bash
 npm install
-npm run dev       # http://localhost:3003
+npm run dev        # http://localhost:3003
 ```
 
+**It runs with no environment variables set.** Pasting a list, searching, playing a full
+tournament, seeing results, and the copy/CSV/JSON exports all work unconfigured. Each
+variable below unlocks exactly one extra feature; anything missing degrades to a plain
+message in the UI rather than a broken button.
+
+| Variable | What it unlocks |
+| --- | --- |
+| `DATABASE_URL` | Neon Postgres connection. Use the **pooled** endpoint (host contains `-pooler`) — `lib/db.ts` sets `prepare: false` for it. |
+| `AUTH_SECRET` | Session signing. Generate with `npx auth secret`. |
+| `AUTH_GOOGLE_ID` | Google OAuth client ID. |
+| `AUTH_GOOGLE_SECRET` | Google OAuth client secret. |
+| `SPOTIFY_CLIENT_ID` | Spotify playlist **import** (client-credentials flow, no user login). |
+| `SPOTIFY_CLIENT_SECRET` | As above. |
+| `SPOTIFY_REDIRECT_URI` | Spotify playlist **export**. Must match the dashboard exactly, e.g. `https://song-rankings.vercel.app/api/spotify/callback`. |
+| `SONGRANK_PREVIEW_FIXTURES` | Testing only. Set to `1` to serve deterministic fixture songs with locally synthesized preview tones, for environments with no outbound access to `itunes.apple.com`. |
+
+**Google sign-in also requires `DATABASE_URL`.** Signing in writes a user row, so
+credentials without a database would authenticate someone into a write with nowhere to go.
+Sign-in stays hidden until both halves are present.
+
+Google redirect URI: `https://<your-domain>/api/auth/callback/google`.
+
+## Database
+
+The schema is one idempotent file — every statement is `IF NOT EXISTS` guarded, so it is
+safe to re-run. That is the whole migration story; there is no migration tool.
+
 ```bash
-npm run lint       # eslint .
-npm run typecheck  # tsc --noEmit
-npm run build      # next build
+npm run db:migrate          # applies lib/db/schema.sql
 ```
 
-The pairing engine (`lib/swiss.ts`) has its own headless check, independent
-of the rest of the app:
+Or paste `lib/db/schema.sql` into Neon's SQL editor. Two tables: `users`, and `tournaments`
+storing only the song list and the vote log — rounds, standings and the champion are
+recomputed from those on every load.
+
+## Checks
 
 ```bash
-npm run db:migrate  # applies lib/db/schema.sql, needs DATABASE_URL
+npm run lint
+npm run typecheck
+npm run build
 node --experimental-strip-types scripts/verify-swiss.ts
 ```
 
-`verify-swiss.ts` plays out every field size from 2 to 64 songs under three
-voting policies and asserts the engine's invariants on every round (correct
-round counts, no duplicate pairings, at most one bye per song, exactly one
-champion). See that script's header comment for why it stops at 64 rather
-than sweeping much further.
+`verify-swiss.ts` plays out tournaments across n = 2..64 under several voting policies and
+asserts the invariants that matter: correct round counts, no duplicate pairings within a
+round, every song paired at most once per round, at most one bye per song, and exactly one
+undefeated champion at the end.
 
-## What each environment variable unlocks
+## Licence
 
-Copy `.env.example` to `.env.local` for local development, or set these in
-Vercel under Project Settings → Environment Variables. See `.env.example`
-itself for the *why* behind each one — this is just the summary:
-
-| Variable | Unlocks | Missing means |
-|---|---|---|
-| `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` | Google sign-in | Sign-in UI is hidden entirely |
-| `DATABASE_URL` | Saved history (`/history`), resuming a tournament on another device | `/history` explains it isn't configured; tournaments still work fully, kept in the browser's `localStorage` instead |
-| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | Importing a public Spotify playlist by link | The Spotify tab on `/new` explains it isn't configured and points at paste/search |
-| `SPOTIFY_REDIRECT_URI` | Exporting a finished ranking as a new Spotify playlist | The "Export to Spotify" button is visibly disabled with a one-line reason; every other export (copy/CSV/JSON) still works |
-| `SONGRANK_PREVIEW_FIXTURES` | **Testing only.** Set to `1` to make song search return a deterministic, offline fixture set with synthesized audio instead of calling the real iTunes API | Leave unset. See `lib/fixtures.ts` |
-
-Saved history specifically needs **both** `DATABASE_URL` and the Google
-variables together — an account with nowhere to save a tournament isn't
-useful on its own.
-
-## How a tournament works
-
-A tournament is nothing more than its seeded song list plus an ordered vote
-log (`lib/types.ts`'s `Tournament`). Every round, pairing, standing and the
-eventual champion are *derived* from that log on every render
-(`derive()` in `lib/swiss.ts`) rather than stored — which is what makes
-undo a one-line operation and a mid-tournament refresh always land back on
-the exact matchup you left.
-
-When the song count isn't a power of two, the standard Swiss float-down can
-leave the planned rounds with two undefeated songs, or none — the engine
-settles this with extra sudden-death "Playoff Round" rounds, clearly labeled
-in the UI rather than looking like a bug. See `lib/swiss.ts`'s
-`fewestLossesPool` for the full reasoning.
-
-## Where audio comes from
-
-Preview clips come from the free, keyless **iTunes Search API**, not
-Spotify — Spotify removed 30-second previews from its Web API for new apps,
-so as of 2026 it simply can't supply one. Every request to it goes through
-this app's own server routes (`/api/songs/search`, `/api/songs/resolve`),
-never directly from the browser, and a missing preview is treated as a
-normal, expected outcome (plenty of real tracks don't have one) — the song
-stays fully votable either way. See `lib/itunes.ts` for the full reasoning.
+No licence specified yet.
