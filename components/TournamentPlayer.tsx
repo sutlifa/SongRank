@@ -117,6 +117,16 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     if (!resolved) {
         return (
             <div className="mx-auto max-w-4xl px-4 py-16 text-center text-fg-muted sm:px-6">
+            {/* `sync` MUST render in every branch, this one included.
+                With `authEnabled`, useTournamentLoader deliberately leaves
+                `resolved` false and waits for TournamentServerSync -- which
+                IS `sync` -- to call onServerResolved. Returning early without
+                rendering it deadlocks a signed-in user on this very screen
+                forever: resolved can't flip until sync mounts, and sync can't
+                mount until resolved flips. Keeping it mounted in all branches
+                also stops its internal resolvedRef from being reset by an
+                unmount/remount as the branches switch. */}
+            {sync}
                 Loading your tournament…
             </div>
         );
@@ -125,6 +135,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     if (!tournament || !derived) {
         return (
             <div className="mx-auto max-w-lg px-4 py-16 text-center sm:px-6">
+                {sync}
                 <h1 className="mb-2 text-xl font-bold">Tournament not found</h1>
                 <p className="mb-6 text-sm text-fg-muted">
                     This link doesn&apos;t match a tournament on this device
