@@ -1,0 +1,170 @@
+// lib/types.ts
+//
+// The shared vocabulary of the app. Everything persisted -- localStorage for a
+// signed-out user, a JSONB column for a signed-in one -- is one of these
+// shapes, so a change here is a change to the save format. Add fields, don't
+// repurpose them.
+
+/** Clip lengths the user can choose between on a matchup card. */
+export const CLIP_SECONDS = [10, 15, 30] as const;
+export type ClipSeconds = (typeof CLIP_SECONDS)[number];
+
+/**
+ * One song in a tournament.
+ *
+ * `previewUrl` and `artworkUrl` are both nullable on purpose: they come from
+ * the iTunes Search API, which is a best-effort match against free text, and
+ * plenty of real tracks simply have no 30-second preview. A song with neither
+ * is still a first-class entrant -- it is voted on by title and artist alone.
+ */
+export interface Song {
+    /** Stable within a tournament; used as the key in every pairing and vote. */
+    id: string;
+    title: string;
+    artist: string;
+    /** iTunes `artworkUrl100`, upgraded to a larger size when we render it. */
+    artworkUrl: string | null;
+    /** iTunes `previewUrl` (m4a, 30s), or null when resolution found nothing. */
+    previewUrl: string | null;
+    /** Length of the preview file in seconds, when the upstream reported one. */
+    previewSeconds: number | null;
+    /** Spotify track URI, only ever filled in at export time. */
+    spotifyUri: string | null;
+    /**
+     * Short, user-facing reason there is no clip ("No preview available",
+     * "Couldn't reach Apple Music"). Shown on the card so a missing player
+     * reads as a known state rather than a broken one.
+     */
+    previewNote: string | null;
+}
+
+/** A recorded human decision. Votes are the *only* thing we persist about play. */
+export interface Vote {
+    /** The pairing this answered, e.g. "s3-2". Validated on replay. */
+    pairingId: string;
+    winnerId: string;
+}
+
+/**
+ * The saved shape of a tournament.
+ *
+ * Note what is *not* here: rounds, pairings, standings, the current matchup.
+ * Those are all derived (see `derive` in lib/swiss.ts) from the seeded song
+ * list plus the vote log, and the derivation is deterministic. That is what
+ * makes undo a one-line `votes.pop()`, makes a mid-round refresh safe, and
+ * keeps a half-finished tournament small enough to sit in localStorage.
+ */
+export interface Tournament {
+    /** Public id, the `[id]` in /t/[id]. Not a database key. */
+    id: string;
+    name: string;
+    createdAt: string;
+    updatedAt: string;
+    clipSeconds: ClipSeconds;
+    /** Seed order. Index in this array is the seed, and the final tiebreaker. */
+    songs: Song[];
+    votes: Vote[];
+}
+
+export type RoundKind = "swiss" | "playoff";
+
+/** One matchup. `b === null` means a bye, which is auto-won by `a`. */
+export interface Pairing {
+    id: string;
+    round: number;
+    /** Position within the round, 0-based. */
+    index: number;
+    kind: RoundKind;
+    a: string;
+    b: string | null;
+    winner: string | null;
+    isBye: boolean;
+    /**
+     * True when these two have already played. We only ever allow this after
+     * an exhaustive search proves no rematch-free pairing of the score group
+     * exists -- the UI says so, because otherwise it looks like a bug.
+     */
+    isRematch: boolean;
+}
+
+export interface Round {
+    number: number;
+    kind: RoundKind;
+    /** "Round 2 of 4" / "Playoff Round 1". */
+    label: string;
+    /** One line explaining a playoff round's existence. Null for Swiss rounds. */
+    note: string | null;
+    pairings: Pairing[];
+    complete: boolean;
+}
+
+export interface Standing {
+    songId: string;
+    rank: number;
+    wins: number;
+    losses: number;
+    byes: number;
+    /** 3 per win; byes count as wins. */
+    points: number;
+    /** Opponent match-win percentage, 0..1. */
+    omw: number;
+    /** Ids of every non-bye opponent faced so far. */
+    opponents: string[];
+}
+
+export interface CurrentMatchup {
+    round: Round;
+    pairing: Pairing;
+    /** 1-based, byes excluded -- this is what "Matchup 3 of 7" counts. */
+    numberInRound: number;
+    matchupsInRound: number;
+}
+
+export interface Derived {
+    plannedRounds: number;
+    rounds: Round[];
+    /** Sorted best-first. This is the final ranking once status is "complete". */
+    standings: Standing[];
+    status: "empty" | "in_progress" | "complete";
+    championId: string | null;
+    current: CurrentMatchup | null;
+    /** Non-bye matchups decided so far. */
+    matchupsPlayed: number;
+    /** Best current estimate of the total, for the progress bar. */
+    matchupsPlanned: number;
+    /** True when an extra sudden-death phase is running. */
+    inPlayoffs: boolean;
+}
+
+/** A song as it comes out of the paste parser, before the user reviews it. */
+export interface ParsedSong {
+    title: string;
+    artist: string;
+    /** The original line, so the review table can show what we started from. */
+    raw: string;
+    /**
+     * True when the line used a separator that doesn't say which side is which
+     * ("Daft Punk - Around the World" and "Around the World - Daft Punk" are
+     * the same string shape). The review table flags these for a swap.
+     */
+    ambiguous: boolean;
+}
+
+export interface ParseResult {
+    songs: ParsedSong[];
+    /** Lines dropped because an identical song was already in the list. */
+    duplicates: number;
+    /** Lines dropped because the list hit MAX_SONGS. */
+    truncated: number;
+}
+
+/** A search hit from our own /api/songs/search. */
+export interface SearchResult {
+    title: string;
+    artist: string;
+    album: string | null;
+    artworkUrl: string | null;
+    previewUrl: string | null;
+    previewSeconds: number | null;
+    itunesId: number | null;
+}

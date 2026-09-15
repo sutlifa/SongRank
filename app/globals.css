@@ -1,0 +1,163 @@
+@import "tailwindcss";
+
+/*
+ * Tailwind v4 is configured entirely here, via @theme -- there is no
+ * tailwind.config.ts in this project (unlike the MTG app, which is still on
+ * v3). See AGENT-TEAM.md's house-stack table.
+ *
+ * Design is dark-first: SongRank is meant to be looked at while someone's
+ * comparing two pieces of album art, and a near-black stage makes artwork
+ * read as the thing to look at rather than competing with a white page for
+ * attention. Every token still gets a real light-mode value below, though --
+ * "dark-first" describes which palette got designed with more care, not
+ * which one is allowed to look unfinished.
+ *
+ * The tokens are plain CSS custom properties registered as Tailwind's
+ * --color-* namespace (so `bg-bg`, `text-fg`, `border-border`, etc. all
+ * work as utilities), and are re-pointed for light mode entirely through
+ * the cascade -- see the @media block below -- rather than by swapping
+ * Tailwind classes at runtime. That's what lets every component just say
+ * `bg-bg-soft` once and be correct in both themes for free.
+ */
+@theme {
+    --color-bg: #08080c;
+    --color-bg-soft: #131318;
+    --color-bg-soft-2: #1c1c24;
+    --color-border: #2a2a34;
+    --color-fg: #f4f4f6;
+    --color-fg-muted: #a3a3b0;
+    --color-accent: #a855f7;
+    --color-accent-strong: #9333ea;
+    --color-accent-fg: #fbf7ff;
+    --color-danger: #f87171;
+    --color-danger-fg: #2a0a0a;
+    --color-success: #4ade80;
+    --color-focus: #c084fc;
+
+    --font-sans:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+        "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* Light mode: same names, values chosen so every pairing (fg-on-bg,
+   accent-fg-on-accent, muted text against a card) still clears WCAG AA. */
+@media (prefers-color-scheme: light) {
+    :root {
+        --color-bg: #f7f7fa;
+        --color-bg-soft: #ffffff;
+        --color-bg-soft-2: #eeeef3;
+        --color-border: #dcdce3;
+        --color-fg: #16161c;
+        --color-fg-muted: #5c5c6b;
+        --color-accent: #7c3aed;
+        --color-accent-strong: #6d28d9;
+        --color-accent-fg: #ffffff;
+        --color-danger: #dc2626;
+        --color-danger-fg: #ffffff;
+        --color-success: #16a34a;
+        --color-focus: #7c3aed;
+    }
+}
+
+:root {
+    color-scheme: dark;
+    /* iOS/Android safe-area insets, in case this is ever opened as a PWA or
+       inside a notched viewport -- harmless padding of 0 everywhere else. */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: light) {
+    :root {
+        color-scheme: light;
+    }
+}
+
+* {
+    border-color: var(--color-border);
+}
+
+body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* A visible, high-contrast focus ring everywhere, rather than trusting each
+   component to remember one -- this app is played with the keyboard (A/B/
+   arrow-key shortcuts on the matchup screen), so focus visibility isn't
+   optional polish here. */
+:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/*
+ * Tailwind v4 only lets @apply reach Tailwind-generated utilities (or
+ * classes explicitly declared with @utility) -- unlike v3, a plain
+ * `@layer components { .btn {...} }` class isn't itself something a later
+ * rule can @apply. So each button variant spells out the shared base
+ * properties directly rather than composing a `.btn` class into it; the
+ * repetition is the price of that, paid once, here.
+ */
+@utility btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-lg);
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+@utility btn-primary {
+    @apply btn bg-accent text-accent-fg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility btn-secondary {
+    @apply btn bg-bg-soft-2 text-fg border border-border hover:bg-bg-soft-2/70 disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility btn-ghost {
+    @apply btn bg-transparent text-fg-muted hover:bg-bg-soft-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility btn-danger {
+    @apply btn bg-transparent text-danger border border-danger/40 hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility card {
+    border-radius: var(--radius-2xl);
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-bg-soft);
+}
+@utility input {
+    width: 100%;
+    border-radius: var(--radius-lg);
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-bg-soft);
+    padding: 0.625rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-fg);
+}
+.input::placeholder {
+    color: var(--color-fg-muted);
+}
+.input:focus-visible {
+    border-color: var(--color-accent);
+}
+@utility kbd {
+    display: inline-flex;
+    min-width: 1.5em;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-bg-soft-2);
+    padding: 0.125rem 0.375rem;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--color-fg-muted);
+}
