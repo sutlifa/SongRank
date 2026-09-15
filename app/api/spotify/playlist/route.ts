@@ -27,11 +27,33 @@ export async function GET(req: Request) {
         );
     }
 
+    // Spotify's own editorial and algorithmic playlists ("Today's Top Hits",
+    // the Disney/mood/decade mixes, Discover Weekly) all carry ids beginning
+    // `37i9dQZ`, and since late 2024 the Web API returns 404 for them to
+    // third-party applications however the caller authenticates. They are
+    // still fully public inside Spotify's own apps, which is exactly why this
+    // needs saying out loud: the generic "make sure it's public" message sends
+    // someone off to re-check a setting that is already correct and cannot be
+    // the cause. Detected up front rather than inferred from the 404, so the
+    // advice is specific instead of a guess about why the read failed.
+    if (playlistId.startsWith("37i9dQZ")) {
+        return NextResponse.json(
+            {
+                error:
+                    "That's a Spotify-curated playlist, and Spotify's API blocks other apps from reading those — it isn't your link or its privacy setting. Open it in Spotify, add the tracks to a playlist of your own, and import that instead. Pasting the song list also works.",
+            },
+            { status: 400 }
+        );
+    }
+
     try {
         const tracks = await getPlaylistTracks(playlistId);
         if (!tracks) {
             return NextResponse.json(
-                { error: "Could not read that playlist. Make sure it's public and the link is correct." },
+                {
+                    error:
+                        "Could not read that playlist. It has to be one created by a Spotify user and set to public — Spotify's own curated playlists can't be read by other apps.",
+                },
                 { status: 502 }
             );
         }
