@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipSeconds, SearchResult, Song } from "@/lib/types";
 import ClipPlayer from "./ClipPlayer";
 import SongArt from "./SongArt";
@@ -12,6 +12,15 @@ import SongArt from "./SongArt";
  * unacceptable." This screen makes every song's preview status (and, for
  * anything wrong, a fix) visible *before* a single matchup is played.
  *
+ * A second, later report sharpened what "a fix" has to mean: "I just want to
+ * make sure we are getting a working version that actually offers
+ * suggestions for replacements, right now we are getting no suggestions for
+ * the ones that are missing." A manual search box the user has to type into
+ * themselves doesn't count -- so every row that needs attention now fetches
+ * its own candidates automatically (see `useSuggestions` below) and shows
+ * them as one-click picks. The manual box stays, as the fallback for when
+ * none of the automatic suggestions are right.
+ *
  * Lives as an in-memory step inside NewTournament rather than its own route
  * (`/new/check`) on purpose: a route would need the whole draft song list --
  * up to MAX_SONGS entries, several of them with an artwork URL -- to survive
@@ -22,24 +31,42 @@ import SongArt from "./SongArt";
  *
  * Pagination (not a virtualization library -- there isn't one in
  * package.json, and this doesn't need one) keeps the number of simultaneously
- * mounted <audio> elements bounded regardless of how large the tournament is;
+ * mounted <audio> elements bounded regardless of how large the tournament is,
+ * and is also what keeps the automatic suggestion fetch bounded: only the
+ * current page's unmatched rows ever fetch, not all 256 songs on mount.
  * ClipPlayer's shared `activeAudioRef` (same prop it already takes on the
  * matchup screen) keeps playback to one clip at a time within a page.
  */
 
 const PAGE_SIZE = 20;
+/** At most this many suggestion lookups in flight at once -- see `useSuggestions`. */
+const SUGGEST_CONCURRENCY = 3;
+
+type SuggestionState = { status: "loading" } | { status: "loaded"; results: SearchResult[] } | { status: "error" };
 
 export default function PreflightCheck({
     songs,
+    weakSongIds,
     clipSeconds,
     onChange,
+    onWeakResolved,
     onBack,
     onStart,
     starting,
 }: {
     songs: Song[];
+    /**
+     * Ids of songs that resolved to only a "partial" iTunes match -- see
+     * NewTournament's own doc comment on this set. These songs *have* a
+     * previewUrl (draftToSong still filled one in) but the match is a guess
+     * worth double-checking, so they get automatic suggestions the same as a
+     * flat miss, not just the red "no preview" treatment.
+     */
+    weakSongIds: Set<string>;
     clipSeconds: ClipSeconds;
     onChange: (songs: Song[]) => void;
+    /** Fired when a row that was in `weakSongIds` gets replaced, so the parent can drop it from that set. */
+    onWeakResolved: (id: string) => void;
     onBack: () => void;
     onStart: () => void;
     starting: boolean;
@@ -47,20 +74,34 @@ export default function PreflightCheck({
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
     const [page, setPage] = useState(0);
 
-    const missingCount = useMemo(() => songs.filter((s) => !s.previewUrl).length, [songs]);
+    function isUnmatched(song: Song): boolean {
+        return !song.previewUrl || weakSongIds.has(song.id);
+    }
 
-    // Missing-preview songs first, has-preview songs after. Array.prototype.sort
-    // is stable (guaranteed since ES2019), so within each group songs keep
+    const unmatchedCount = useMemo(
+        () => songs.filter(isUnmatched).length,
+        // isUnmatched is a plain function of songs/weakSongIds, redefined
+        // every render -- listing it would defeat the memo entirely for no
+        // benefit, since its own inputs are already the two deps below.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [songs, weakSongIds]
+    );
+
+    // Unmatched songs first, confirmed ones after. Array.prototype.sort is
+    // stable (guaranteed since ES2019), so within each group songs keep
     // their original order -- this is purely a "surface the risky ones"
     // reorder, never a shuffle a user has to re-orient around.
     const ordered = useMemo(
-        () => [...songs].sort((a, b) => Number(Boolean(a.previewUrl)) - Number(Boolean(b.previewUrl))),
-        [songs]
+        () => [...songs].sort((a, b) => Number(!isUnmatched(a)) - Number(!isUnmatched(b))),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [songs, weakSongIds]
     );
 
     const totalPages = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
     const currentPage = Math.min(page, totalPages - 1);
     const pageItems = ordered.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
+
+    const suggestions = useSuggestions(pageItems, isUnmatched);
 
     function replaceSong(id: string, result: SearchResult) {
         onChange(
@@ -82,6 +123,7 @@ export default function PreflightCheck({
                     : s
             )
         );
+        onWeakResolved(id);
     }
 
     function removeSong(id: string) {
@@ -101,14 +143,14 @@ export default function PreflightCheck({
 
     return (
         <div className="space-y-4">
-            {missingCount === 0 ? (
+            {unmatchedCount === 0 ? (
                 // The clean-list case: a single prominent affordance so a
                 // paste that already checks out doesn't feel like a chore to
                 // click through -- see the brief's "don't make a clean list
                 // feel like a chore."
                 <div className="card border-success/30 bg-success/10 p-4 text-center sm:p-5">
                     <p className="font-semibold text-fg">
-                        All {songs.length} song{songs.length === 1 ? "" : "s"} have previews.
+                        All {songs.length} song{songs.length === 1 ? "" : "s"} have a confident match.
                     </p>
                     <button
                         type="button"
@@ -122,11 +164,12 @@ export default function PreflightCheck({
             ) : (
                 <div className="card border-danger/30 bg-danger/10 p-4 sm:p-5">
                     <p className="font-semibold text-fg">
-                        {missingCount} of {songs.length} song{songs.length === 1 ? "" : "s"} have no preview.
+                        {unmatchedCount} of {songs.length} song{songs.length === 1 ? "" : "s"} need a check.
                     </p>
                     <p className="mt-1 text-sm text-fg-muted">
-                        They&apos;re listed first below. Replace or remove them, or start anyway -- a song with no
-                        clip is still fully votable by title and artist alone.
+                        They&apos;re listed first below, each with suggested replacements pulled automatically. Pick
+                        one, search manually, or start anyway -- a song with no clip is still fully votable by title
+                        and artist alone.
                     </p>
                 </div>
             )}
@@ -136,6 +179,8 @@ export default function PreflightCheck({
                     <SongRow
                         key={song.id}
                         song={song}
+                        unmatched={isUnmatched(song)}
+                        suggestion={suggestions[song.id]}
                         clipSeconds={clipSeconds}
                         activeAudioRef={activeAudioRef}
                         onReplace={replaceSong}
@@ -171,7 +216,7 @@ export default function PreflightCheck({
             <div className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
                 <p className="text-sm text-fg-muted">
                     {songs.length} song{songs.length === 1 ? "" : "s"} ready
-                    {missingCount > 0 && `, ${missingCount} without a preview`}.
+                    {unmatchedCount > 0 && `, ${unmatchedCount} to check`}.
                 </p>
                 <div className="flex gap-2">
                     <button type="button" onClick={onBack} disabled={starting} className="btn-secondary">
@@ -186,14 +231,89 @@ export default function PreflightCheck({
     );
 }
 
+/**
+ * Fetches /api/songs/suggest for every unmatched song on the *current page
+ * only*, with bounded concurrency -- the whole reason this isn't a plain
+ * per-row `useEffect` is to cap the total number of in-flight lookups at
+ * once regardless of how many unmatched rows the page has (up to PAGE_SIZE),
+ * mirroring the same bounded-worker-pool shape NewTournament's own
+ * `resolvePreviews` and lib/parse.ts's `resolveImportBatch` already use.
+ *
+ * Keyed by song id, not by page: a song already fetched keeps its cached
+ * suggestions if it reappears (e.g. the page is revisited), so going back
+ * and forth never re-fetches something already answered.
+ */
+function useSuggestions(pageItems: Song[], isUnmatched: (song: Song) => boolean) {
+    const [suggestions, setSuggestions] = useState<Record<string, SuggestionState>>({});
+    const cache = useRef(suggestions);
+    cache.current = suggestions;
+
+    // pageItems is a fresh array every render (it's a slice of `ordered`),
+    // so the effect keys off the ids it actually contains rather than the
+    // array reference -- otherwise it would re-run (harmlessly, thanks to
+    // the `!cache.current[s.id]` guard below, but pointlessly) on every
+    // render instead of only when the visible set of songs changes.
+    const pageKey = pageItems.map((s) => s.id).join("|");
+
+    useEffect(() => {
+        const targets = pageItems.filter((s) => isUnmatched(s) && !cache.current[s.id]);
+        if (targets.length === 0) return;
+
+        let cancelled = false;
+
+        // Mark every target "loading" up front (one batched update) so a
+        // fast re-render of this effect doesn't see the same songs as
+        // un-fetched and queue them twice.
+        setSuggestions((prev) => {
+            const next = { ...prev };
+            for (const s of targets) next[s.id] = { status: "loading" };
+            return next;
+        });
+
+        let cursor = 0;
+        async function worker() {
+            for (;;) {
+                const index = cursor++;
+                if (index >= targets.length) return;
+                const song = targets[index];
+                try {
+                    const res = await fetch("/api/songs/suggest", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ title: song.title, artist: song.artist }),
+                    });
+                    const data = await res.json();
+                    const results = ((data.suggestions ?? []) as { result: SearchResult }[]).map((s) => s.result);
+                    if (!cancelled) setSuggestions((prev) => ({ ...prev, [song.id]: { status: "loaded", results } }));
+                } catch {
+                    if (!cancelled) setSuggestions((prev) => ({ ...prev, [song.id]: { status: "error" } }));
+                }
+            }
+        }
+
+        Promise.all(Array.from({ length: Math.min(SUGGEST_CONCURRENCY, targets.length) }, worker)).catch(() => {});
+
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pageKey]);
+
+    return suggestions;
+}
+
 function SongRow({
     song,
+    unmatched,
+    suggestion,
     clipSeconds,
     activeAudioRef,
     onReplace,
     onRemove,
 }: {
     song: Song;
+    unmatched: boolean;
+    suggestion: SuggestionState | undefined;
     clipSeconds: ClipSeconds;
     activeAudioRef: React.MutableRefObject<HTMLAudioElement | null>;
     onReplace: (id: string, result: SearchResult) => void;
@@ -236,10 +356,8 @@ function SongRow({
         setResults([]);
     }
 
-    const missing = !song.previewUrl;
-
     return (
-        <li className={`rounded-lg border p-3 ${missing ? "border-danger/40 bg-danger/5" : "border-border"}`}>
+        <li className={`rounded-lg border p-3 ${unmatched ? "border-danger/40 bg-danger/5" : "border-border"}`}>
             <div className="flex items-start gap-3">
                 <SongArt title={song.title} artworkUrl={song.artworkUrl} size={48} />
                 <div className="min-w-0 flex-1">
@@ -262,7 +380,7 @@ function SongRow({
                         onClick={() => (searching ? closeSearch() : setSearching(true))}
                         className="btn-ghost !px-2 !py-1.5 text-xs"
                     >
-                        {searching ? "Cancel" : "Replace"}
+                        {searching ? "Cancel" : "Search manually"}
                     </button>
                     <button
                         type="button"
@@ -274,6 +392,19 @@ function SongRow({
                     </button>
                 </div>
             </div>
+
+            {unmatched && !searching && (
+                <div className="mt-3 border-t border-border pt-3">
+                    <SuggestionPanel
+                        song={song}
+                        suggestion={suggestion}
+                        activeAudioRef={activeAudioRef}
+                        clipSeconds={clipSeconds}
+                        onPick={(result) => onReplace(song.id, result)}
+                        onSearchManually={() => setSearching(true)}
+                    />
+                </div>
+            )}
 
             {searching && (
                 <div className="mt-3 border-t border-border pt-3">
@@ -316,5 +447,98 @@ function SongRow({
                 </div>
             )}
         </li>
+    );
+}
+
+/**
+ * The automatic-suggestions block for one unmatched row: a loading state, a
+ * short shelf of candidates (artwork, title, artist, an audition player, a
+ * "Use this" pick), or a plain "no matches" message when the lookup
+ * genuinely came back empty.
+ */
+function SuggestionPanel({
+    song,
+    suggestion,
+    activeAudioRef,
+    clipSeconds,
+    onPick,
+    onSearchManually,
+}: {
+    song: Song;
+    suggestion: SuggestionState | undefined;
+    activeAudioRef: React.MutableRefObject<HTMLAudioElement | null>;
+    clipSeconds: ClipSeconds;
+    onPick: (result: SearchResult) => void;
+    onSearchManually: () => void;
+}) {
+    if (!suggestion || suggestion.status === "loading") {
+        return (
+            <p className="text-xs text-fg-muted">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-fg-muted align-middle" />{" "}
+                Looking for suggestions…
+            </p>
+        );
+    }
+
+    if (suggestion.status === "error") {
+        return (
+            <p className="text-xs text-fg-muted">
+                Couldn&apos;t reach Apple Music for suggestions.{" "}
+                <button type="button" onClick={onSearchManually} className="underline underline-offset-2 hover:text-fg">
+                    Search manually
+                </button>{" "}
+                instead.
+            </p>
+        );
+    }
+
+    if (suggestion.results.length === 0) {
+        return (
+            <p className="text-xs text-fg-muted">
+                No matches found on Apple Music for &quot;{song.title}&quot;. You can{" "}
+                <button type="button" onClick={onSearchManually} className="underline underline-offset-2 hover:text-fg">
+                    search manually
+                </button>{" "}
+                or remove this song.
+            </p>
+        );
+    }
+
+    return (
+        <div>
+            <p className="mb-2 text-xs font-medium text-fg-muted">Suggested replacements</p>
+            <ul className="space-y-1.5">
+                {suggestion.results.map((r, i) => (
+                    <li key={`${r.itunesId ?? i}-${r.title}-${r.artist}`} className="rounded-lg bg-bg-soft-2/60 p-2">
+                        <div className="flex items-center gap-2">
+                            <SongArt title={r.title} artworkUrl={r.artworkUrl} size={36} />
+                            <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm">{r.title}</p>
+                                <p className="truncate text-xs text-fg-muted">{r.artist}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onPick(r)}
+                                className="btn-secondary shrink-0 !px-2.5 !py-1.5 text-xs"
+                            >
+                                Use this
+                            </button>
+                        </div>
+                        {r.previewUrl && (
+                            <div className="mt-2">
+                                <ClipPlayer
+                                    previewUrl={r.previewUrl}
+                                    previewSeconds={r.previewSeconds}
+                                    previewNote={null}
+                                    clipSeconds={clipSeconds}
+                                    activeAudioRef={activeAudioRef}
+                                    label={r.title}
+                                />
+                            </div>
+                        )}
+                    </li>
+                ))}
+            </ul>
+        </div>
     );
 }

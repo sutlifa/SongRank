@@ -10,6 +10,13 @@ import { resolveSong } from "@/lib/itunes";
  * of /new. Always 200 with `preview: null` on no match or upstream failure,
  * never a 500: a real track legitimately having no preview is an expected
  * outcome, not an error (see lib/itunes.ts).
+ *
+ * `confidence` rides alongside `preview` (rather than being folded away)
+ * because "found a preview" and "found a *confident* preview" aren't the
+ * same thing -- a "partial" match still fills the row in, but the pre-flight
+ * screen (see PreflightCheck.tsx) also treats it as needing suggestions, the
+ * same as a flat miss. Always "none" when `preview` is null; resolveSong
+ * never returns a candidate it scored "none" on.
  */
 export async function POST(req: Request) {
     try {
@@ -20,10 +27,10 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing title" }, { status: 400 });
         }
 
-        const preview = await resolveSong(title, artist);
-        return NextResponse.json({ preview });
+        const resolved = await resolveSong(title, artist);
+        return NextResponse.json({ preview: resolved?.match ?? null, confidence: resolved?.confidence ?? "none" });
     } catch (err) {
         console.error("SONG RESOLVE ERROR:", err);
-        return NextResponse.json({ preview: null });
+        return NextResponse.json({ preview: null, confidence: "none" });
     }
 }

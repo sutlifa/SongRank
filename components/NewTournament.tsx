@@ -6,6 +6,7 @@ import Link from "next/link";
 import { MAX_SONGS } from "@/lib/swiss";
 import { describeRankingPlan, estimateMatchups, ROUND_ROBIN_CEILING } from "@/lib/ranking";
 import { CLIP_SECONDS, RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
+import type { MatchConfidence } from "@/lib/parse";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { setSessionTournament } from "@/lib/sessionCache";
 import SessionStatus from "./SessionStatus";
@@ -67,7 +68,22 @@ export interface DraftSong {
     title: string;
     artist: string;
     ambiguous: boolean;
-    resolved: { artworkUrl: string | null; previewUrl: string | null; previewSeconds: number | null } | null;
+    /**
+     * `confidence` is optional because only NewTournament's own
+     * `resolvePreviews` pass (the iTunes cascade in lib/itunes.ts) ever
+     * scores one -- PasteImportTab already filters to "high" before setting
+     * `resolved`, and SearchImportTab's entries are a human's own pick, so
+     * neither needs a score attached to be trusted. Only "partial" is ever
+     * surfaced anywhere (a "none" never reaches here -- resolveSong returns
+     * null for those, and this whole field stays null); see PreflightCheck's
+     * `weakSongIds` prop for what that drives.
+     */
+    resolved: {
+        artworkUrl: string | null;
+        previewUrl: string | null;
+        previewSeconds: number | null;
+        confidence?: MatchConfidence;
+    } | null;
     spotifyUri: string | null;
 }
 
@@ -115,7 +131,17 @@ async function resolvePreviews(
                     body: JSON.stringify({ title: draft.title, artist: draft.artist }),
                 });
                 const data = await res.json();
-                resolvedById.set(draft.id, data.preview ?? null);
+                resolvedById.set(
+                    draft.id,
+                    data.preview
+                        ? {
+                              artworkUrl: data.preview.artworkUrl ?? null,
+                              previewUrl: data.preview.previewUrl ?? null,
+                              previewSeconds: data.preview.previewSeconds ?? null,
+                              confidence: (data.confidence as MatchConfidence | undefined) ?? "none",
+                          }
+                        : null
+                );
             } catch {
                 resolvedById.set(draft.id, null);
             }
@@ -150,6 +176,16 @@ export default function NewTournament({
     const [error, setError] = useState<string | null>(null);
     const [step, setStep] = useState<Step>("build");
     const [preflightSongs, setPreflightSongs] = useState<Song[]>([]);
+    /**
+     * Ids of songs whose iTunes match came back "partial" rather than
+     * "high" -- see DraftSong.resolved's own doc comment. These songs *do*
+     * have a previewUrl (draftToSong still fills it in), so they wouldn't
+     * otherwise trip PreflightCheck's "missing preview" check, but problem B
+     * asks for auto-suggestions on "no preview *or* no confident match" --
+     * this set is how the pre-flight screen tells the two apart from a
+     * preview URL alone.
+     */
+    const [weakSongIds, setWeakSongIds] = useState<Set<string>>(new Set());
     /** True only for the brief window between the pre-flight "Start tournament" click and the redirect -- there's no network wait here (saving is local-first), but a double-click shouldn't queue two saves. */
     const [launching, setLaunching] = useState(false);
     /** Whether *this visitor* is actually signed in -- not the same as
@@ -235,6 +271,22 @@ export default function NewTournament({
             const prevById = new Map(prev.map((s) => [s.id, s]));
             return asSongs.map((s) => prevById.get(s.id) ?? s);
         });
+
+        // A song the pre-flight screen already replaced (via a suggestion or
+        // the manual search box) is no longer "weak" -- its replacement came
+        // from a human's own pick, same trust level as SearchImportTab. Only
+        // songs still carrying a "partial" score from *this* resolve pass
+        // stay flagged, so going back to "build" and forward again doesn't
+        // resurrect a fix the user already made.
+        setWeakSongIds((prev) => {
+            const next = new Set(prev);
+            for (const d of resolved) {
+                if (d.resolved?.confidence === "partial") next.add(d.id);
+                else next.delete(d.id);
+            }
+            return next;
+        });
+
         setStep("preflight");
     }
 
@@ -303,8 +355,17 @@ export default function NewTournament({
                 )}
                 <PreflightCheck
                     songs={preflightSongs}
+                    weakSongIds={weakSongIds}
                     clipSeconds={clipSeconds}
                     onChange={setPreflightSongs}
+                    onWeakResolved={(id) =>
+                        setWeakSongIds((prev) => {
+                            if (!prev.has(id)) return prev;
+                            const next = new Set(prev);
+                            next.delete(id);
+                            return next;
+                        })
+                    }
                     onBack={() => setStep("build")}
                     onStart={() => confirmStart(preflightSongs)}
                     starting={launching}

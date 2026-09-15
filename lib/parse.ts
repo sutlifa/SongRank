@@ -256,8 +256,20 @@ function buildItems(lines: string[]): Item[] {
         // "Title, Artist" -- only tried when there's exactly one comma, so a
         // title that itself contains a comma ("Happiness, Tennessee, USA")
         // isn't torn apart by it.
+        //
+        // Skipped entirely when the line already has a dash separator, and
+        // that guard is load-bearing. An ensemble credit -- "Be Our Guest -
+        // Jerry Orbach, Angela Lansbury & Beauty and the Beast Cast" -- has
+        // exactly one comma, so without this check the comma rule fires first
+        // and splits *inside the performer list*, producing the title "Be Our
+        // Guest - Jerry Orbach": the dash and the first performer swallowed
+        // into the song name. Three or more commas escaped the bug only
+        // because this rule requires exactly two parts, which is why it looked
+        // intermittent rather than systematic. When a dash is present it is
+        // the real title/artist boundary and every comma after it belongs to
+        // the artist list, so the dash path below owns the line.
         const commaParts = line.split(",");
-        if (commaParts.length === 2 && commaParts[0].trim() && commaParts[1].trim()) {
+        if (!DASH_RE.test(line) && commaParts.length === 2 && commaParts[0].trim() && commaParts[1].trim()) {
             items.push({ kind: "song", song: { title: stripQuotes(commaParts[0]), artist: stripQuotes(commaParts[1]), raw, ambiguous: false } });
             continue;
         }
