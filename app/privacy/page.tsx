@@ -9,10 +9,10 @@ export const metadata = {
  * Written against what the code actually does, not against a template.
  *
  * If you change what is stored -- the columns in lib/db/schema.sql, the
- * profile fields auth.ts hands to upsertUser, how lib/spotify.ts keeps its
- * token, or whether @vercel/analytics stays mounted in app/layout.tsx --
- * this page is now wrong and has to change with it. A privacy page that
- * quietly drifts from the code is worse than none, because people rely on it.
+ * profile fields auth.ts hands to upsertUser, or whether @vercel/analytics
+ * stays mounted in app/layout.tsx -- this page is now wrong and has to
+ * change with it. A privacy page that quietly drifts from the code is worse
+ * than none, because people rely on it.
  */
 export default function PrivacyPage() {
     return (
@@ -71,13 +71,6 @@ export default function PrivacyPage() {
                         titles and artists you search for or paste in are sent to Apple to look up
                         artwork and preview clips. Apple handles that data under its own privacy
                         policy.
-                    </li>
-                    <li>
-                        <strong className="text-fg">Spotify (only if you use it).</strong> If you
-                        import a playlist or export a ranking, we talk to Spotify on your behalf.
-                        When you connect your Spotify account, the access token is kept in a
-                        short-lived, browser-only cookie that JavaScript cannot read. It is never
-                        written to our database.
                     </li>
                     <li>
                         <strong className="text-fg">Vercel.</strong> The site is hosted on Vercel

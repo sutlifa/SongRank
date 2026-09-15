@@ -8,9 +8,9 @@ export default function HomePage() {
                     Rank any list of songs, <span className="text-accent">head to head</span>.
                 </h1>
                 <p className="mx-auto max-w-xl text-lg leading-relaxed text-fg-muted">
-                    Paste a list, search for songs, or import a Spotify playlist. Listen to a clip of
-                    each, vote on one matchup at a time, and get a real ranking out the other end —
-                    every matchup chosen to be the one that teaches the ranking the most.
+                    Paste a list or search for songs one at a time. Listen to a clip of each, vote
+                    on one matchup at a time, and get a real ranking out the other end — every
+                    matchup chosen to be the one that teaches the ranking the most.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                     <Link href="/new" className="btn-primary text-base">
@@ -26,7 +26,7 @@ export default function HomePage() {
                 <Step
                     n={1}
                     title="Build your list"
-                    body="Paste song names, search and add them one by one, or drop in a Spotify playlist link."
+                    body="Paste song names, or search and add them one by one."
                 />
                 <Step
                     n={2}

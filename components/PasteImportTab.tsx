@@ -73,7 +73,6 @@ export default function PasteImportTab({ onAdd }: { onAdd: (songs: DraftSong[]) 
                           previewSeconds: catalogueMatch.previewSeconds,
                       }
                     : null,
-                spotifyUri: null,
             };
         });
 

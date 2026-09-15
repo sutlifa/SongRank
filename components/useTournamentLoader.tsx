@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { Tournament } from "@/lib/types";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { getSessionTournament, setSessionTournament } from "@/lib/sessionCache";
+import { tournamentFormat } from "@/lib/tournamentEngine";
 import TournamentServerSync from "./TournamentServerSync";
 
 /**
@@ -51,6 +52,7 @@ export function useTournamentLoader(
     tournament: Tournament | null;
     resolved: boolean;
     updateTournament: (updater: (t: Tournament) => Tournament) => void;
+    renameTournament: (nextName: string) => void;
     sync: ReactNode;
 } {
     const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -107,9 +109,59 @@ export function useTournamentLoader(
         });
     }, []);
 
+    /**
+     * Renames the current tournament in place. Reuses `updateTournament`'s
+     * plumbing (session cache always, localStorage when signed in) for the
+     * in-memory/local-device side, but -- unlike a vote -- can't ride
+     * TournamentServerSync's debounced autosave to reach the server: job 2
+     * there only fires when `votes.length` changes (see that file's header),
+     * so a rename with no accompanying vote would never get PUT at all.
+     * This calls the same PUT /api/tournaments/[id] endpoint directly
+     * instead, with the same body shape TournamentServerSync's autosave
+     * sends, so the two never disagree about what a "save" looks like.
+     *
+     * The vote log and every derived field are untouched -- only `name` and
+     * `updatedAt` change -- so this can never invalidate a tournament
+     * mid-play (see lib/types.ts: a tournament is `{ songs, votes }` and
+     * nothing else derives from anything this function writes).
+     */
+    const renameTournament = useCallback(
+        (nextName: string) => {
+            setTournament((prev) => {
+                if (!prev) return prev;
+                const next: Tournament = { ...prev, name: nextName, updatedAt: new Date().toISOString() };
+                setSessionTournament(next);
+                if (signedInRef.current) {
+                    saveLocalTournament(next);
+                    fetch(`/api/tournaments/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            name: next.name,
+                            clipSeconds: next.clipSeconds,
+                            format: tournamentFormat(next),
+                            depth: next.depth ?? null,
+                            songs: next.songs,
+                            votes: next.votes,
+                        }),
+                    }).catch(() => {
+                        // Best-effort, same as TournamentServerSync's autosave:
+                        // the rename is already safe in this tab's in-memory
+                        // cache and localStorage; a failed PUT just means this
+                        // device's history entry is stale until the next
+                        // successful save (the next vote's autosave will carry
+                        // the new name along too, since it reads from `next`).
+                    });
+                }
+                return next;
+            });
+        },
+        [id]
+    );
+
     const sync = authEnabled ? (
         <TournamentServerSync id={id} tournament={tournament} onServerResolved={handleServerResolved} />
     ) : null;
 
-    return { tournament, resolved, updateTournament, sync };
+    return { tournament, resolved, updateTournament, renameTournament, sync };
 }

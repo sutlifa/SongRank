@@ -54,7 +54,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         playClip: () => startPlayback("clip"),
     }));
 
-    async function startPlayback(nextMode: "clip" | "full") {
+    function startPlayback(nextMode: "clip" | "full") {
         const audio = audioRef.current;
         if (!audio) return;
 
@@ -73,48 +73,53 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
 
         const target = nextMode === "clip" ? clipStart : 0;
 
-        // Seeking before the browser has the file's metadata is the entire
-        // reason this used to need two clicks to start.
+        // Two rules collide here, and the order below is the only arrangement
+        // that satisfies both. Changing it will reintroduce a bug that has now
+        // been fixed twice.
         //
-        // `preload="none"` (deliberate -- see this component's header) means a
-        // fresh <audio> sits at readyState HAVE_NOTHING with a `duration` of
-        // NaN. Assigning `currentTime = 7.5` in that state does not queue a
-        // seek to 7.5 seconds: with no known duration the browser treats it as
-        // a seek past the end and fires `ended` immediately. That set `playing`
-        // false and `progress` to 1 -- a full bar and silence -- and only the
-        // second click worked, because by then the metadata was cached and the
-        // seek finally meant something.
+        // Rule 1 -- you cannot seek before the metadata exists. `preload="none"`
+        // (deliberate; see this component's header) leaves a fresh <audio> at
+        // readyState HAVE_NOTHING with a `duration` of NaN. Assigning
+        // `currentTime = 7.5` there does not queue a seek: with no known
+        // duration the browser reads it as a seek past the end and fires
+        // `ended` at once, which showed as a full progress bar and silence.
         //
-        // So load the metadata first when we don't have it, and only then seek.
-        // `load()` is what starts the fetch, since preload="none" means nothing
-        // is requested until something asks. Both success and error resolve the
-        // promise: a preview URL that 404s should fall through to `play()` and
-        // surface as an ordinary playback failure rather than hanging here.
-        if (audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+        // Rule 2 -- you cannot `await` anything before calling `play()`. Browsers
+        // only accept play() as user-initiated while the click's activation
+        // token is live, and awaiting `loadedmetadata` outlives it. The first
+        // attempt at this fix awaited the metadata and then seeked and played;
+        // that obeyed rule 1 and broke rule 2, so the first click loaded the
+        // file and played nothing, and it still took two clicks.
+        //
+        // So: call play() synchronously inside the gesture, and seek separately
+        // once the metadata arrives. play() is itself what starts the fetch,
+        // and `loadedmetadata` always precedes audible output, so the clip
+        // still begins at the right offset rather than from zero.
+        const seekToTarget = () => {
+            try {
+                audio.currentTime = target;
+            } catch {
+                // Safari can still refuse a seek it deems out of range. Playing
+                // from wherever the element sits beats not playing at all.
+            }
+        };
+
+        if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+            seekToTarget();
+        } else {
             setLoading(true);
-            await new Promise<void>((resolve) => {
-                const done = () => {
-                    audio.removeEventListener("loadedmetadata", done);
-                    audio.removeEventListener("error", done);
-                    resolve();
-                };
-                audio.addEventListener("loadedmetadata", done);
-                audio.addEventListener("error", done);
-                audio.load();
-            });
-            setLoading(false);
-
-            // The user can start the other song, or press play again, while the
-            // metadata is still in flight. If that happened this call is stale
-            // and must not yank playback back to its own clip.
-            if (activeAudioRef.current !== audio) return;
-        }
-
-        try {
-            audio.currentTime = target;
-        } catch {
-            // Safari can still refuse a seek it considers out of range. Playing
-            // from wherever the element currently sits beats not playing at all.
+            const onReady = () => {
+                audio.removeEventListener("loadedmetadata", onReady);
+                audio.removeEventListener("error", onReady);
+                setLoading(false);
+                // The user may have started the other song while this was
+                // loading. If this player no longer holds the shared slot, its
+                // seek is stale and must not drag playback back.
+                if (activeAudioRef.current !== audio) return;
+                seekToTarget();
+            };
+            audio.addEventListener("loadedmetadata", onReady);
+            audio.addEventListener("error", onReady);
         }
 
         audio.play().catch(() => {
@@ -122,6 +127,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
             // means playback didn't start -- the button state below already
             // reflects that via the `pause`/`play` event listeners, so there's
             // nothing further to show.
+            setLoading(false);
         });
     }
 

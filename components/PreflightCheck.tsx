@@ -115,10 +115,6 @@ export default function PreflightCheck({
                           previewUrl: result.previewUrl,
                           previewSeconds: result.previewSeconds,
                           previewNote: result.previewUrl ? null : "No preview available for this track.",
-                          // A replacement is a different track from whatever
-                          // Spotify export it might have come from -- the old
-                          // spotifyUri would point at the wrong song.
-                          spotifyUri: null,
                       }
                     : s
             )

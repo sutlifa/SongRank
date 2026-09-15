@@ -50,7 +50,6 @@ function makeSongs(n: number): Song[] {
         artworkUrl: null,
         previewUrl: null,
         previewSeconds: null,
-        spotifyUri: null,
         previewNote: null,
     }));
 }

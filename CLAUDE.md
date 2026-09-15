@@ -15,9 +15,9 @@ rediscovering what previous sessions already paid to learn.
 
 ## What it is
 
-Paste/search/import a list of songs → compare them two at a time with a short
+Paste or search for a list of songs → compare them two at a time with a short
 audio clip → an adaptive pairwise ranking engine narrows to one winner and a
-full ranked list → export to Spotify/CSV/JSON.
+full ranked list → export as text/CSV/JSON.
 
 ## Stack (pinned — don't bump casually)
 
@@ -52,7 +52,6 @@ lib/
   db/schema.sql one idempotent file — the entire DDL surface. No migration tool.
   parse.ts      pure paste-parsing heuristics
   itunes.ts     preview/artwork lookup
-  spotify.ts    client-credentials import + OAuth export
 scripts/
   migrate.ts    applies schema.sql
   verify-*.ts   headless invariant checks — run them, don't eyeball
@@ -81,8 +80,6 @@ auth.ts         NextAuth config at repo root
 | `DATABASE_URL` | Neon. **Pooled endpoint** (host has `-pooler`). |
 | `AUTH_SECRET` | Session signing (`npx auth secret`). |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Google sign-in. |
-| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Playlist import. |
-| `SPOTIFY_REDIRECT_URI` | Playlist export. Must match Spotify's dashboard exactly. |
 | `SONGRANK_PREVIEW_FIXTURES=1` | Test-only: deterministic fixture songs + synthesized WAV tones. |
 
 **Google sign-in also requires `DATABASE_URL`** — sign-in writes a user row, so

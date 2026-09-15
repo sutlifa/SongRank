@@ -7,19 +7,18 @@ import { deriveTournament } from "@/lib/tournamentEngine";
 import SongArt from "./SongArt";
 import ClipPlayer from "./ClipPlayer";
 import ExportPanel from "./ExportPanel";
+import EditableTournamentName from "./EditableTournamentName";
 import { useTournamentLoader } from "./useTournamentLoader";
 
 export default function ResultsView({
     id,
     authEnabled,
-    spotifyExportEnabled,
 }: {
     id: string;
     authEnabled: boolean;
-    spotifyExportEnabled: boolean;
 }) {
     const router = useRouter();
-    const { tournament, resolved, sync } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, sync, renameTournament } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
     const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
@@ -67,7 +66,7 @@ export default function ResultsView({
     const songById = new Map(tournament.songs.map((s) => [s.id, s]));
     const ranked = derived.standings.map((s) => {
         const song = songById.get(s.songId)!;
-        return { title: song.title, artist: song.artist, spotifyUri: song.spotifyUri };
+        return { title: song.title, artist: song.artist };
     });
 
     return (
@@ -75,18 +74,14 @@ export default function ResultsView({
             {sync}
 
             <header className="mb-6">
-                <h1 className="text-xl font-bold sm:text-2xl">{tournament.name}</h1>
+                <EditableTournamentName name={tournament.name} onRename={renameTournament} />
                 <p className="mt-1 text-sm text-fg-muted">
                     {tournament.songs.length} songs · {tournament.votes.length} matchups played
                 </p>
             </header>
 
             <div className="mb-6">
-                <ExportPanel
-                    tournamentName={tournament.name}
-                    ranked={ranked}
-                    spotifyExportEnabled={spotifyExportEnabled}
-                />
+                <ExportPanel tournamentName={tournament.name} ranked={ranked} />
             </div>
 
             <ol className="space-y-3">

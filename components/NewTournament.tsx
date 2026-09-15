@@ -12,7 +12,6 @@ import { setSessionTournament } from "@/lib/sessionCache";
 import SessionStatus from "./SessionStatus";
 import PasteImportTab from "./PasteImportTab";
 import SearchImportTab from "./SearchImportTab";
-import SpotifyImportTab from "./SpotifyImportTab";
 import ReviewTable from "./ReviewTable";
 import PreflightCheck from "./PreflightCheck";
 
@@ -51,13 +50,13 @@ function GuestSaveWarning({ authEnabled }: { authEnabled: boolean }) {
 }
 
 /**
- * A song mid-import, before it's a real `Song`. The three import tabs
- * (paste/search/Spotify) all produce these; the review table lets a human
+ * A song mid-import, before it's a real `Song`. Both import tabs
+ * (paste/search) produce these; the review table lets a human
  * edit them; `proceedToPreflight` below turns the finished list into
  * `Song[]` and hands off to the pre-flight check.
  *
  * `resolved` is `null` for anything that still needs an iTunes lookup
- * (pasted or Spotify-imported songs, or a paste-imported song the catalogue
+ * (a pasted song, or a paste-imported song the catalogue
  * lookup in PasteImportTab couldn't confidently match) and already-filled
  * for anything that came with artwork/preview already attached (a search
  * result, or a high-confidence paste match). Keeping this distinction is
@@ -84,10 +83,9 @@ export interface DraftSong {
         previewSeconds: number | null;
         confidence?: MatchConfidence;
     } | null;
-    spotifyUri: string | null;
 }
 
-type Tab = "paste" | "search" | "spotify";
+type Tab = "paste" | "search";
 
 /** The two steps of /new: build the list, then the pre-flight check (problem 2) before a tournament can start. */
 type Step = "build" | "preflight";
@@ -101,7 +99,6 @@ function draftToSong(d: DraftSong): Song {
         artworkUrl: d.resolved?.artworkUrl ?? null,
         previewUrl: d.resolved?.previewUrl ?? null,
         previewSeconds: d.resolved?.previewSeconds ?? null,
-        spotifyUri: d.spotifyUri,
         previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
     };
 }
@@ -156,10 +153,8 @@ async function resolvePreviews(
 }
 
 export default function NewTournament({
-    spotifyImportEnabled,
     authEnabled,
 }: {
-    spotifyImportEnabled: boolean;
     authEnabled: boolean;
 }) {
     const router = useRouter();
@@ -394,7 +389,6 @@ export default function NewTournament({
                         [
                             ["paste", "Paste a list"],
                             ["search", "Search"],
-                            ["spotify", "Spotify playlist"],
                         ] as [Tab, string][]
                     ).map(([value, label]) => (
                         <button
@@ -412,7 +406,6 @@ export default function NewTournament({
 
                 {tab === "paste" && <PasteImportTab onAdd={addSongs} />}
                 {tab === "search" && <SearchImportTab onAdd={addSongs} />}
-                {tab === "spotify" && <SpotifyImportTab enabled={spotifyImportEnabled} onAdd={addSongs} />}
             </div>
 
             <div className="mt-6">

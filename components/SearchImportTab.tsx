@@ -8,7 +8,7 @@ import SongArt from "./SongArt";
 /**
  * The search tab. Results already carry artwork/preview straight from
  * /api/songs/search, so a song added here needs no later resolve step --
- * only paste and Spotify-import entries do (see NewTournament).
+ * only a pasted entry does (see NewTournament).
  */
 export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[]) => void }) {
     const [term, setTerm] = useState("");
@@ -63,7 +63,6 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                     previewUrl: result.previewUrl,
                     previewSeconds: result.previewSeconds,
                 },
-                spotifyUri: null,
             },
         ]);
         setAdded((prev) => new Set(prev).add(key));

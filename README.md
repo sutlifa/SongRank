@@ -10,8 +10,7 @@ round schedule would need.
 
 ## Features
 
-- **Load songs three ways** — paste a list, search for them one by one, or import a public
-  Spotify playlist.
+- **Load songs two ways** — paste a list, or search for them one by one.
 - **Tolerant pasting** — handles `Artist - Title`, `Title - Artist`, `Title by Artist`,
   `Title, Artist`, numbered and bulleted lists, quotes and duplicates. Ambiguous rows get
   an editable review step instead of a silent guess.
@@ -26,8 +25,7 @@ round schedule would need.
   decision; a signed-out tournament lives only in the current browser tab. The build page
   warns about this prominently before you start, since a large Thorough tournament is
   thousands of matchups.
-- **Export** — copy as text, CSV, JSON, or push the ranking straight to a new Spotify
-  playlist.
+- **Export** — copy as text, download CSV, or download JSON.
 
 ## How the ranking works
 
@@ -92,9 +90,6 @@ message in the UI rather than a broken button.
 | `AUTH_SECRET` | Session signing. Generate with `npx auth secret`. |
 | `AUTH_GOOGLE_ID` | Google OAuth client ID. |
 | `AUTH_GOOGLE_SECRET` | Google OAuth client secret. |
-| `SPOTIFY_CLIENT_ID` | Spotify playlist **import** (client-credentials flow, no user login). |
-| `SPOTIFY_CLIENT_SECRET` | As above. |
-| `SPOTIFY_REDIRECT_URI` | Spotify playlist **export**. Must match the dashboard exactly, e.g. `https://song-rankings.vercel.app/api/spotify/callback`. |
 | `SONGRANK_PREVIEW_FIXTURES` | Testing only. Set to `1` to serve deterministic fixture songs with locally synthesized preview tones, for environments with no outbound access to `itunes.apple.com`. |
 
 **Google sign-in also requires `DATABASE_URL`.** Signing in writes a user row, so

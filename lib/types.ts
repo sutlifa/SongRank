@@ -28,8 +28,6 @@ export interface Song {
     previewUrl: string | null;
     /** Length of the preview file in seconds, when the upstream reported one. */
     previewSeconds: number | null;
-    /** Spotify track URI, only ever filled in at export time. */
-    spotifyUri: string | null;
     /**
      * Short, user-facing reason there is no clip ("No preview available",
      * "Couldn't reach Apple Music"). Shown on the card so a missing player

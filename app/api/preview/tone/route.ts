@@ -96,13 +96,47 @@ export async function GET(req: Request) {
 
     const wav = synthesizeWav(freq || 440, wave, seconds);
 
+    const baseHeaders: Record<string, string> = {
+        "Content-Type": "audio/wav",
+        // Deterministic output for a given query string -- safe to cache
+        // hard, including in the browser between replays of the same clip.
+        "Cache-Control": "public, max-age=31536000, immutable",
+        // Without this a browser treats the response as unseekable and every
+        // `currentTime` assignment silently collapses to 0. That left the
+        // fixtures unable to exercise the one behaviour they exist to prove:
+        // ClipPlayer starts a clip a quarter of the way into the preview, and
+        // offline that seek looked like it worked while actually playing from
+        // the beginning. Apple's CDN serves real previews with range support,
+        // so honouring it here makes the fixture behave like the thing it
+        // stands in for instead of quietly diverging from it.
+        "Accept-Ranges": "bytes",
+    };
+
+    // Single ranges only ("bytes=START-" or "bytes=START-END"), which is all a
+    // media element issues when seeking. Anything else falls through to the
+    // whole body -- a valid response to a range request a server declines.
+    const match = req.headers.get("range")?.match(/^bytes=(\d+)-(\d*)$/);
+    if (match) {
+        const start = Number(match[1]);
+        const end = match[2] ? Math.min(Number(match[2]), wav.length - 1) : wav.length - 1;
+        if (start <= end && start < wav.length) {
+            const slice = wav.subarray(start, end + 1);
+            return new NextResponse(new Uint8Array(slice), {
+                status: 206,
+                headers: {
+                    ...baseHeaders,
+                    "Content-Length": String(slice.length),
+                    "Content-Range": `bytes ${start}-${end}/${wav.length}`,
+                },
+            });
+        }
+        return new NextResponse(null, {
+            status: 416,
+            headers: { ...baseHeaders, "Content-Range": `bytes */${wav.length}` },
+        });
+    }
+
     return new NextResponse(new Uint8Array(wav), {
-        headers: {
-            "Content-Type": "audio/wav",
-            "Content-Length": String(wav.length),
-            // Deterministic output for a given query string -- safe to cache
-            // hard, including in the browser between replays of the same clip.
-            "Cache-Control": "public, max-age=31536000, immutable",
-        },
+        headers: { ...baseHeaders, "Content-Length": String(wav.length) },
     });
 }

@@ -7,10 +7,9 @@
  * background hue is derived from the title so the same song always gets the
  * same placeholder color across renders, without needing to store one.
  *
- * Plain <img>, not next/image: artwork can come from iTunes's mzstatic.com
- * CDN today and, per lib/spotify.ts, is never fetched from Spotify at all --
- * optimizing one external, already-compressed JPEG isn't worth maintaining
- * an images.remotePatterns allowlist for.
+ * Plain <img>, not next/image: artwork only ever comes from iTunes's
+ * mzstatic.com CDN -- optimizing one external, already-compressed JPEG isn't
+ * worth maintaining an images.remotePatterns allowlist for.
  */
 export default function SongArt({
     title,

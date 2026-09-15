@@ -51,7 +51,7 @@ export default function SiteFooter() {
 
                 <p className="mt-4 text-xs leading-relaxed text-fg-muted">
                     Song previews and artwork come from the iTunes Search API. SongRank is not
-                    affiliated with Apple or Spotify.
+                    affiliated with Apple.
                 </p>
             </div>
         </footer>

@@ -7,11 +7,12 @@ import { deriveTournament, recordVote, undoLastVote } from "@/lib/tournamentEngi
 import SongCard from "./SongCard";
 import type { ClipPlayerHandle } from "./ClipPlayer";
 import StandingsPeek from "./StandingsPeek";
+import EditableTournamentName from "./EditableTournamentName";
 import { useTournamentLoader } from "./useTournamentLoader";
 
 export default function TournamentPlayer({ id, authEnabled }: { id: string; authEnabled: boolean }) {
     const router = useRouter();
-    const { tournament, resolved, updateTournament, sync } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, updateTournament, renameTournament, sync } = useTournamentLoader(id, authEnabled);
 
     const leftPlayerRef = useRef<ClipPlayerHandle>(null);
     const rightPlayerRef = useRef<ClipPlayerHandle>(null);
@@ -157,7 +158,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
             {sync}
 
             <header className="mb-6">
-                <h1 className="truncate text-xl font-bold sm:text-2xl">{tournament.name}</h1>
+                <EditableTournamentName name={tournament.name} onRename={renameTournament} />
                 {current && (
                     <p className="mt-1 text-sm text-fg-muted">
                         {current.label} · Matchup {current.numberInRound} of {current.matchupsInRound}

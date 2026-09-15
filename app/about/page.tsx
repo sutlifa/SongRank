@@ -18,9 +18,9 @@ export default function AboutPage() {
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">How it works</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
-                    Load songs by pasting a list, searching for them one at a time, or importing a
-                    Spotify playlist. Each song is matched against Apple&apos;s music catalogue to
-                    pull in artwork and a preview clip.
+                    Load songs by pasting a list or searching for them one at a time. Each song is
+                    matched against Apple&apos;s music catalogue to pull in artwork and a preview
+                    clip.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Then you vote. Two songs at a time, with a short clip of each so you can refresh

@@ -4,8 +4,11 @@
 // to manage) rather than Spotify's Web API. Spotify removed `preview_url`
 // from track objects for apps created after Nov 2024, so as of 2026 it
 // simply cannot supply a 30-second clip -- iTunes still can, and still does.
-// Spotify is used elsewhere in this app (playlist import, ranked-playlist
-// export), just never for audio.
+// SongRank no longer talks to Spotify at all (the playlist import/export
+// integration was removed -- editorial playlists are blocked from
+// third-party apps, a user-created public playlist also failed to import,
+// and export needed a full OAuth dance plus a 25-user cap and a quota
+// review to lift), so iTunes is now the only external source in the app.
 //
 // Every call here runs server-side only (from /api/songs/search,
 // /api/songs/resolve and /api/songs/suggest), never from the browser --
