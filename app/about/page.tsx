@@ -35,6 +35,22 @@ export default function AboutPage() {
             </section>
 
             <section className="mb-8">
+                <h2 className="mb-2 text-lg font-semibold">Sharing and comparing</h2>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    Rankings are private unless you say otherwise. Make one public and it appears on
+                    Browse, where anyone can read it, copy its song list, and rank the same songs
+                    themselves — their votes are their own, and nothing they do can change your
+                    ranking.
+                </p>
+                <p className="text-sm leading-relaxed text-fg-muted">
+                    Once you have both ranked the same list, comparing the two shows how closely you
+                    agree, which songs you disagree most sharply about, and every song side by side.
+                    Following someone is one-way and simply puts their public rankings first on your
+                    Browse page.
+                </p>
+            </section>
+
+            <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">Why pairwise ratings, not Swiss or a bracket</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
                     A knockout bracket eliminates half the field every round. That finds a winner

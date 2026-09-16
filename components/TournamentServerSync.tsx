@@ -49,6 +49,18 @@ export default function TournamentServerSync({
 }) {
     const { data: session, status } = useSession();
     const resolvedRef = useRef(false);
+    /**
+     * How many votes we have CONFIRMED are on the server -- not how many the
+     * page is showing. Job 2 skips the autosave when the two agree, so
+     * anything written here is a claim that the server already has that state.
+     *
+     * Only ever set from a server response: the fetch in job 1 (which is the
+     * server's own answer) and a successful PUT in job 2. The in-memory and
+     * localStorage paths below deliberately leave it null, because both can be
+     * AHEAD of the server -- that is exactly the case where a save is still
+     * owed, and claiming otherwise is how a finished ranking ends up stored
+     * with no votes in it.
+     */
     const savedVoteCountRef = useRef<number | null>(null);
 
     // Job 0 + 1: resolve a starting tournament, once, as soon as we know
@@ -70,7 +82,17 @@ export default function TournamentServerSync({
         if (tournament) {
             // Already have an in-memory copy -- nothing to fetch, and it
             // counts as "resolved" as far as the loading state goes.
-            savedVoteCountRef.current = tournament.votes.length;
+            //
+            // savedVoteCountRef is deliberately NOT set here. This copy came
+            // from this tab, not from the server, so it may well be ahead of
+            // what is stored -- most sharply when the player has just
+            // redirected here on the final vote, which is the one vote that
+            // completes a ranking. Marking it "saved" on that basis is what
+            // used to leave a finished ranking sitting in the database a vote
+            // short, or (after a fast burst of votes that outran the debounce)
+            // with no votes at all -- invisible to the owner, who sees their
+            // own correct copy locally, and wrong for everyone else the moment
+            // the ranking is public.
             onServerResolved(tournament, true);
             return;
         }
@@ -80,7 +102,11 @@ export default function TournamentServerSync({
         // behavior for a signed-in user, per the product decision.
         const local = loadLocalTournament(id);
         if (local) {
-            savedVoteCountRef.current = local.votes.length;
+            // Same reasoning as the in-memory path above: localStorage is
+            // written on every vote, so it is at least as fresh as the server
+            // and frequently fresher. Leaving the ref null lets job 2 push it
+            // up, which also repairs any divergence left by an earlier failed
+            // or missed save.
             onServerResolved(local, true);
             return;
         }
@@ -88,6 +114,10 @@ export default function TournamentServerSync({
         fetch(`/api/tournaments/${id}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data: { tournament?: Tournament } | null) => {
+                // This one IS the server's state, so it is the one path that
+                // can honestly claim the two agree -- and doing so stops job 2
+                // from immediately PUTting straight back what we just read.
+                if (data?.tournament) savedVoteCountRef.current = data.tournament.votes.length;
                 onServerResolved(data?.tournament ?? null, true);
             })
             .catch(() => onServerResolved(null, true));

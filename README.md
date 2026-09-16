@@ -36,6 +36,13 @@ round schedule would need.
   warns about this prominently before you start, since a large Thorough ranking is
   thousands of matchups.
 - **Export** — copy as text, download CSV, or download JSON.
+- **Share, copy and compare** — any saved ranking can be made public (private by default,
+  always). Public ones show up on `/browse`, friends first. Copy someone's song list into a
+  ranking of your own — their votes don't come with it, and nothing you do touches their
+  ranking — then compare the two: rank correlation, biggest disagreements, and a full
+  side-by-side table.
+- **People** — find someone by name, or by their full email address if you already know it.
+  Following is one-way and private: it only decides whose rankings come first on Browse.
 
 ## How the ranking works
 
@@ -123,6 +130,27 @@ resolution.
 six hours. Every failure path returns `null` and the card is simply not shown, so a feed
 outage costs a card rather than a page.
 
+## Sharing
+
+`tournaments.visibility` defaults to `'private'`, on the column and on the `ALTER` — every
+row that already existed was saved by someone who was never asked, so nothing becomes
+visible without an explicit act by its owner.
+
+Access control lives in the SQL, not in a caller. `getPublicTournament` has no `userId`
+parameter at all and filters on `visibility = 'public'` itself, so there is no version of
+"forgot to check" available to a page. Someone else's public ranking is rendered by
+`/r/[id]`, a separate server-rendered route rather than a read-only mode of `/t/[id]` —
+pointing the interactive player (which autosaves every vote) at a ranking you don't own
+would put a stranger's write one forgotten branch away.
+
+The people directory **never returns a full email address**. Names are searchable by
+substring; emails only by an exact whole-address match, so you can find someone you already
+know and cannot discover anyone you don't. Results carry a masked form
+(`al•••@example.com`) instead. See `lib/people.ts` for the reasoning.
+
+Friendship is **one-way** and gates nothing — it only decides ordering on `/browse`. See the
+`friends` table comment in `lib/db/schema.sql` for why there is no request/accept handshake.
+
 ## Database
 
 The schema is one idempotent file — every statement is `IF NOT EXISTS` guarded, so it is
@@ -145,6 +173,11 @@ npm run build
 node --experimental-strip-types scripts/verify-ranking.ts
 node --experimental-strip-types scripts/verify-swiss.ts
 node --experimental-strip-types scripts/verify-starters.ts
+node --experimental-strip-types scripts/verify-compare.ts
+
+# Needs a throwaway local Postgres; refuses to run against a remote host.
+DATABASE_URL=postgres://... \
+  node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-sharing.ts
 ```
 
 `verify-ranking.ts` is the adaptive engine's proof: it plays rankings across a spread of
@@ -159,6 +192,20 @@ being wrong is silent: a duplicate id hides a list behind another, a song repeat
 list is silently de-duplicated on import so the card over-promises, and a stray empty string
 becomes a song nothing can match. It also prints each list's artist concentration, since a
 genre list that has drifted to a third one artist wastes its most informative early matchups.
+
+`verify-compare.ts` proves the two-pass song matching in `lib/compare.ts` — by id first (so a
+copied list matches exactly even after a "Change version" swap rewrites a title), then by
+normalised text (so two independently built lists still line up) — plus that ranks are
+renumbered within the shared songs and that a single shared song reports no correlation
+rather than a flattering 1.0.
+
+`verify-sharing.ts` is the one script that needs a real database, because what it checks *is*
+the SQL: a missing `WHERE` clause doesn't throw, doesn't fail a type check and doesn't look
+wrong on screen — it just hands out a private ranking. It asserts every access boundary, that
+copying takes songs but not votes and leaves the original untouched, that email search can't
+be walked for addresses, and that deleting an account cascades without taking someone else's
+copy with it. **It truncates the users table**, so it refuses to run unless `DATABASE_URL`
+points at localhost — a refusal that is deliberately not overridable by a flag.
 
 `verify-swiss.ts` is kept for the legacy engine, which still has to replay rankings saved
 before the adaptive engine existed: it plays rankings across n = 2..64 under several

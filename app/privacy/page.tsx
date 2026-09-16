@@ -18,7 +18,7 @@ export default function PrivacyPage() {
     return (
         <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
             <h1 className="mb-2 text-2xl font-bold sm:text-3xl">Privacy</h1>
-            <p className="mb-8 text-sm text-fg-muted">Last updated 15 September 2026</p>
+            <p className="mb-8 text-sm text-fg-muted">Last updated 16 September 2026</p>
 
             <p className="mb-8 text-base leading-relaxed text-fg-muted">
                 SongRank collects as little as it can get away with. Most of it never leaves your
@@ -50,16 +50,55 @@ export default function PrivacyPage() {
                     </li>
                     <li>
                         For each ranking you save: its name, the{" "}
-                        <strong className="text-fg">list of songs</strong> and the{" "}
-                        <strong className="text-fg">record of which song won each matchup</strong>.
-                        Rounds, standings and the final ranking are not stored — they are
-                        recalculated from your votes each time.
+                        <strong className="text-fg">list of songs</strong>, the{" "}
+                        <strong className="text-fg">record of which song won each matchup</strong>,
+                        and whether you have made it public. Rounds, standings and the final ranking
+                        are not stored — they are recalculated from your votes each time.
+                    </li>
+                    <li>
+                        Anyone you choose to follow, so your Browse page can put their public
+                        rankings first.
                     </li>
                 </ul>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     We do not receive your Google password, and we do not ask Google for access to
                     anything beyond basic profile information. Sessions are held in a signed cookie
                     rather than a database table.
+                </p>
+            </section>
+
+            <section className="mb-8">
+                <h2 className="mb-2 text-lg font-semibold">What other people can see</h2>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    <strong className="text-fg">Every ranking you save is private by default</strong>,
+                    including every ranking saved before sharing existed. A ranking only becomes
+                    visible to anyone else when you choose &ldquo;Make public&rdquo; yourself, and you
+                    can take it private again at any time. Nothing you do anywhere else on the site
+                    publishes a ranking as a side effect.
+                </p>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    When a ranking is public, anyone — including people who are not signed in — can
+                    see its name, its song list, how it came out, and your display name. They can
+                    copy the song list to rank themselves, and compare their result with yours. They
+                    cannot change your ranking in any way.
+                </p>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    You also appear in the{" "}
+                    <Link href="/people" className="text-accent hover:underline">
+                        people directory
+                    </Link>{" "}
+                    once you have published at least one ranking, showing your name and a partly
+                    hidden form of your email address like{" "}
+                    <span className="font-mono">al•••@example.com</span>. People can find you by
+                    searching your name, or by typing your email address in full if they already know
+                    it. <strong className="text-fg">Your full email address is never shown to anyone
+                    and never leaves our server</strong>, and a partial address deliberately matches
+                    nothing, so the directory cannot be used to discover addresses.
+                </p>
+                <p className="text-sm leading-relaxed text-fg-muted">
+                    Following someone is one-way and private to you: it only decides whose public
+                    rankings appear first on your Browse page. They are not told, and it gives
+                    neither of you access to anything the other has not made public.
                 </p>
             </section>
 
@@ -105,8 +144,11 @@ export default function PrivacyPage() {
                         History
                     </Link>{" "}
                     and choose <strong className="text-fg">Delete my account</strong>. That removes
-                    your account row and every ranking you have saved, in one go and for good — we
-                    keep no backup copy to restore from, so please be sure. If you have never signed
+                    your account row, every ranking you have saved (public ones included, which
+                    disappear from Browse immediately) and everyone you follow, in one go and for
+                    good — we keep no backup copy to restore from, so please be sure. If someone has
+                    copied a public list of yours, their own ranking is their own and stays with
+                    them; it carries none of your votes. If you have never signed
                     in, there is nothing to delete: clearing your browser data is enough.
                 </p>
             </section>

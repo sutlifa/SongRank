@@ -133,6 +133,22 @@ to find.
 7. `react-hooks` v7 flags refs read during render and sync `setState` in effects as
    hard errors. The codebase defers those by one tick; follow the existing pattern.
 
+## Sharing
+
+`tournaments.visibility` defaults `'private'` — never change that default. Access
+control is IN the SQL (`getPublicTournament` takes no userId and filters on
+`visibility='public'`), never applied by a caller. `/r/[id]` is a separate
+server-rendered route for other people's rankings; do NOT turn `/t/[id]` into a
+read-only mode instead — that route autosaves every vote.
+
+`lib/people.ts` never returns a full email. Name search = substring; email search
+= exact whole address only (prevents harvesting). Masked form on every result.
+
+Friends are one-way and gate nothing; they only order `/browse`.
+
+`scripts/verify-sharing.ts` covers all of this against a local Postgres. It
+truncates `users`, so it hard-refuses any non-localhost `DATABASE_URL`.
+
 ## Ready-made lists
 
 `lib/starterLists.ts` = fixed curated lists as `{title, artist}` pairs (pure, no I/O).

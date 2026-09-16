@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { TournamentSummary } from "@/lib/queries";
 import { plannedRounds, matchupsInRound } from "@/lib/swiss";
 import { estimateMatchups } from "@/lib/ranking";
+import VisibilityToggle from "./VisibilityToggle";
 
 /**
  * A rough "looks finished" hint for the Resume/View results button label --
@@ -85,6 +86,19 @@ export default function HistoryList() {
                                         year: "numeric",
                                     })}
                                 </p>
+                                <div className="mt-1.5">
+                                    {/* Every saved ranking, not just finished
+                                        ones: someone may well want a ranking
+                                        visible while it is still being played,
+                                        and hiding the control until the end
+                                        would make "public" feel like a property
+                                        of results rather than of the ranking. */}
+                                    <VisibilityToggle
+                                        tournamentId={t.id}
+                                        initial={t.visibility ?? "private"}
+                                        compact
+                                    />
+                                </div>
                             </div>
                             <Link href={`/t/${t.id}`} className="btn-secondary shrink-0 !px-3 !py-1.5 text-xs">
                                 {complete ? "View results" : "Resume"}

@@ -10,13 +10,24 @@ import ExportPanel from "./ExportPanel";
 import EditableTournamentName from "./EditableTournamentName";
 import ChangeVersionControl from "./ChangeVersionControl";
 import { useTournamentLoader } from "./useTournamentLoader";
+import VisibilityToggle from "./VisibilityToggle";
+import type { Visibility } from "@/lib/queries";
 
 export default function ResultsView({
     id,
     authEnabled,
+    visibility = null,
 }: {
     id: string;
     authEnabled: boolean;
+    /**
+     * This ranking's current visibility, when the viewer owns a saved copy of
+     * it -- resolved server-side by the results page. Null means the question
+     * doesn't apply here (signed out, no database, or a ranking that only ever
+     * lived in this tab), and the sharing panel is left out entirely rather
+     * than offering a switch that couldn't do anything.
+     */
+    visibility?: Visibility | null;
 }) {
     const router = useRouter();
     const { tournament, resolved, sync, renameTournament, changeSongVersion } = useTournamentLoader(id, authEnabled);
@@ -80,6 +91,13 @@ export default function ResultsView({
                     {tournament.songs.length} songs · {tournament.votes.length} matchups played
                 </p>
             </header>
+
+            {visibility !== null && (
+                <section className="mb-6">
+                    <h2 className="mb-2 text-sm font-semibold text-fg-muted">Who can see this</h2>
+                    <VisibilityToggle tournamentId={id} initial={visibility} />
+                </section>
+            )}
 
             <div className="mb-6">
                 <ExportPanel tournamentName={tournament.name} ranked={ranked} />
