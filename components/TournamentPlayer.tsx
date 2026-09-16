@@ -89,9 +89,10 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
         return () => clearTimeout(timer);
     }, [derived]);
 
-    // Keyboard shortcuts: A/B play a clip, arrow keys vote. Ignored while
-    // focus is in a text field so typing "a" or pressing an arrow key in some
-    // future input doesn't double as a vote.
+    // Keyboard shortcuts: A/B play or pause that side's clip, Space stops
+    // whichever side is playing, arrow keys vote. All ignored while focus is in
+    // a text field, so typing "a" or pressing an arrow key in some future input
+    // doesn't double as a vote.
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
             if (!derived?.current) return;
@@ -113,10 +114,19 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
             const key = e.key.toLowerCase();
             if (key === "a") {
                 e.preventDefault();
-                leftPlayerRef.current?.playClip();
+                leftPlayerRef.current?.toggleClip();
             } else if (key === "b") {
                 e.preventDefault();
-                rightPlayerRef.current?.playClip();
+                rightPlayerRef.current?.toggleClip();
+            } else if (e.key === " " || e.key === "Spacebar") {
+                // Space stops whatever is playing, whichever side it is, so
+                // there is one key to reach for when someone walks in and you
+                // need silence -- without first working out whether it was A or
+                // B that you started. preventDefault because space would
+                // otherwise scroll the page.
+                e.preventDefault();
+                leftPlayerRef.current?.pause();
+                rightPlayerRef.current?.pause();
             } else if (e.key === "ArrowLeft") {
                 e.preventDefault();
                 vote(current.pairingId, current.a);
@@ -227,7 +237,8 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                     </div>
 
                     <p className="mt-4 text-center text-xs text-fg-muted">
-                        <span className="kbd">A</span> / <span className="kbd">B</span> play a clip ·{" "}
+                        <span className="kbd">A</span> / <span className="kbd">B</span> play or pause a
+                        clip · <span className="kbd">Space</span> stop ·{" "}
                         <span className="kbd">←</span> / <span className="kbd">→</span> vote
                     </p>
                 </>

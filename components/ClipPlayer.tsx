@@ -6,6 +6,16 @@ import type { ClipSeconds } from "@/lib/types";
 export interface ClipPlayerHandle {
     /** Starts (or restarts) the clip window. Used by the matchup screen's A/B keyboard shortcuts. */
     playClip: () => void;
+    /**
+     * Pauses if this player is the one currently playing, otherwise starts it.
+     *
+     * A/B are toggles rather than restart-only because pressing the key for a
+     * song you are already hearing obviously means "stop" -- restarting the
+     * same clip from the top is the one thing the user cannot have wanted.
+     */
+    toggleClip: () => void;
+    /** Pauses this player if it is playing. Safe to call when it isn't. */
+    pause: () => void;
 }
 
 interface Props {
@@ -62,6 +72,14 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
 
     useImperativeHandle(ref, () => ({
         playClip: () => startPlayback("clip"),
+        toggleClip: () => {
+            // `playing` is kept in sync by the element's own play/pause event
+            // listeners, so it is accurate even when playback was started or
+            // stopped by something other than this handle.
+            if (playing) audioRef.current?.pause();
+            else startPlayback("clip");
+        },
+        pause: () => audioRef.current?.pause(),
     }));
 
     function startPlayback(nextMode: "clip" | "full") {
