@@ -47,10 +47,10 @@ function formatTime(seconds: number): string {
 }
 
 const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
-    // `clipSeconds` is still in Props so callers and saved rankings keep
-    // round-tripping it, but playback no longer shortens to it -- see the window
-    // comment below.
-    { previewUrl, previewSeconds, previewNote, activeAudioRef, label },
+    // `clipSeconds` and `previewSeconds` both stay in Props so callers and
+    // saved rankings keep round-tripping them, but neither affects playback any
+    // more -- see the window and duration comments below.
+    { previewUrl, previewNote, activeAudioRef, label },
     ref
 ) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -79,10 +79,24 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     /** Whether the current preview has already had its loudness measured. */
     const measuredRef = useRef(false);
 
-    // 30s is the iTunes preview format's fixed length, so it is the right
-    // assumption until the file itself says otherwise -- not an arbitrary
-    // guess, but still only a placeholder for the first render.
-    const duration = actualDuration ?? previewSeconds ?? 30;
+    // Measured length, or 30 as the placeholder until it is measured. The
+    // stored `previewSeconds` is deliberately NOT consulted.
+    //
+    // It used to be, and it produced exactly the confusing behaviour this
+    // replaces: rankings saved before the trackTimeMillis fix carry a
+    // previewSeconds equal to the WHOLE SONG's length, because that is what
+    // iTunes' field actually measures. Fixing lib/itunes.ts stopped new
+    // lookups recording it but could not correct rows already in the
+    // database, so those songs advertised "0:00 / 3:45", played their real
+    // 30-second preview, and then snapped the bar to full when it ended --
+    // looking for all the world like a song that had skipped to the end.
+    //
+    // Since a hint that can be wrong by a factor of seven is worth less than
+    // no hint at all, and every iTunes preview is 30 seconds anyway, the
+    // placeholder is simply 30 until the file itself reports otherwise. That
+    // is right for new data, right for old data, and self-correcting the
+    // moment metadata loads.
+    const duration = actualDuration ?? 30;
     // The clip IS the whole preview now. Apple gives us 30 seconds and that is
     // all the audio there is, so the window runs 0 -> duration: nothing is
     // withheld, and the progress bar below therefore measures the real thing
