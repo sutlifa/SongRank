@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Logo from "@/components/Logo";
 import { signIn } from "@/auth";
 import { isAuthConfigured } from "@/lib/authConfig";
 
@@ -27,12 +28,10 @@ export default async function SignInPage({
         return (
             <div className="mx-auto max-w-md px-4 py-16 sm:px-6">
                 <div className="card space-y-6 p-8 text-center">
-                    <div
-                        className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-bg-soft-2 text-2xl"
-                        aria-hidden="true"
-                    >
-                        ♫
-                    </div>
+                    {/* Muted rather than accent: this is the "sign-in isn't
+                        available" card, and a full-strength brand mark above
+                        that sentence reads as an invitation. */}
+                    <Logo size={56} className="mx-auto opacity-40 grayscale" />
                     <div className="space-y-2">
                         <h1 className="text-2xl font-bold">Sign-in isn&apos;t available here</h1>
                         <p className="text-sm leading-relaxed text-fg-muted">
@@ -65,12 +64,7 @@ export default async function SignInPage({
     return (
         <div className="mx-auto max-w-md px-4 py-16 sm:px-6">
             <div className="card space-y-6 p-8 text-center">
-                <div
-                    className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-accent text-2xl text-accent-fg"
-                    aria-hidden="true"
-                >
-                    ♫
-                </div>
+                <Logo size={56} className="mx-auto" />
 
                 <div className="space-y-2">
                     <h1 className="text-2xl font-bold">Sign in</h1>

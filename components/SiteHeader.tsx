@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import AuthButton from "./AuthButton";
+import Logo from "./Logo";
 import NotificationBell from "./NotificationBell";
 
 const LINKS = [
@@ -21,12 +22,7 @@ export default function SiteHeader({ authEnabled }: { authEnabled: boolean }) {
         <header className="sticky top-0 z-30 border-b border-border bg-bg/90 backdrop-blur supports-[backdrop-filter]:bg-bg/70">
             <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
                 <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
-                    <span
-                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-sm text-accent-fg"
-                        aria-hidden="true"
-                    >
-                        ♫
-                    </span>
+                    <Logo size={28} />
                     SongRank
                 </Link>
 

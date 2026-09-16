@@ -6,6 +6,22 @@ import SiteHeader from "@/components/SiteHeader";
 import UsernameBanner from "@/components/UsernameBanner";
 import { isAuthConfigured } from "@/lib/authConfig";
 
+/**
+ * The colour mobile browsers paint their own chrome with, matching the logo
+ * tile. Lives in `viewport` rather than `metadata` -- Next moved themeColor
+ * there, and setting it on `metadata` is silently ignored.
+ *
+ * Two entries so the bar tracks the page rather than fighting it: the app
+ * already re-themes itself on `prefers-color-scheme` (see app/globals.css), and
+ * a bright accent bar above a dark page reads as a rendering bug.
+ */
+export const viewport = {
+    themeColor: [
+        { media: "(prefers-color-scheme: light)", color: "#f7f7fa" },
+        { media: "(prefers-color-scheme: dark)", color: "#08080c" },
+    ],
+};
+
 export const metadata = {
     title: {
         default: "SongRank",

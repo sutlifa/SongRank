@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="SongRank">
+  <!-- The header logo (see components/SiteHeader.tsx) as a favicon: the same
+       rounded purple tile, the same white beamed quaver.
+
+       The note is drawn as shapes rather than set as the ♫ character on
+       purpose. A favicon is rendered at 16px by a browser that has made no
+       promises about which fonts it has, and a glyph that falls back to a
+       different face -- or to a tofu box -- is worse than no icon. Paths look
+       the same everywhere and can be made deliberately chunky so they survive
+       being drawn into a 16-pixel square.
+
+       The same paths live in components/Logo.tsx, which is what the header and
+       the sign-in page render. They are duplicated because Next's favicon
+       convention needs a literal .svg file on disk and a file cannot import
+       from a React component -- so a change to one is a change to both.
+
+       Colours are the app's own accent tokens from app/globals.css, and they
+       follow the BROWSER's colour scheme rather than the page's, which is the
+       only thing a favicon can know about. Chrome and Firefox honour this;
+       anywhere that doesn't simply gets the light value, which is the brighter
+       and more recognisable of the two. -->
+  <style>
+    .tile { fill: #a855f7; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #7c3aed; }
+    }
+  </style>
+
+  <rect class="tile" width="32" height="32" rx="9" />
+
+  <g fill="#ffffff">
+    <!-- Beam first, so the stems tuck under it and the join stays solid at
+         small sizes instead of showing a seam. -->
+    <path d="M12.7 9.0 L26.3 7.0 L26.3 10.4 L12.7 12.4 Z" />
+    <rect x="12.7" y="9.0" width="2.6" height="13.3" />
+    <rect x="23.7" y="7.0" width="2.6" height="13.3" />
+    <ellipse cx="10.0" cy="22.3" rx="4.3" ry="3.3" transform="rotate(-20 10.0 22.3)" />
+    <ellipse cx="21.0" cy="20.3" rx="4.3" ry="3.3" transform="rotate(-20 21.0 20.3)" />
+  </g>
+</svg>
