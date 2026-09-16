@@ -100,18 +100,14 @@ export default function PrivacyPage() {
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">Deleting your data</h2>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Being straight with you: there is currently no button in the app that deletes
-                    your account and its saved rankings. Until there is, ask via{" "}
-                    <a
-                        href="https://github.com/sutlifa/SongRank/issues/new"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-accent hover:underline"
-                    >
-                        Report a problem
-                    </a>{" "}
-                    and it will be removed. If you have never signed in, there is nothing to delete
-                    — clearing your browser data is enough.
+                    Go to{" "}
+                    <Link href="/history" className="text-accent hover:underline">
+                        History
+                    </Link>{" "}
+                    and choose <strong className="text-fg">Delete my account</strong>. That removes
+                    your account row and every ranking you have saved, in one go and for good — we
+                    keep no backup copy to restore from, so please be sure. If you have never signed
+                    in, there is nothing to delete: clearing your browser data is enough.
                 </p>
             </section>
 

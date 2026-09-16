@@ -27,3 +27,23 @@ export async function upsertUser(user: {
     `;
     return rows[0].id;
 }
+
+/**
+ * Deletes a user and everything belonging to them.
+ *
+ * Their saved rankings go with them automatically: `tournaments.user_id` is
+ * declared `REFERENCES users(id) ON DELETE CASCADE` (see lib/db/schema.sql),
+ * so Postgres removes those rows in the same statement. Deleting the rankings
+ * separately first would be a second way to get this wrong -- a partial
+ * failure between the two would leave an account with no data or data with no
+ * account -- so the cascade is doing real work here, not just tidiness.
+ *
+ * Returns false if there was no such user, which makes the route's response
+ * honest about whether anything was actually removed.
+ */
+export async function deleteUser(userId: number): Promise<boolean> {
+    const rows = await sql<{ id: number }[]>`
+        DELETE FROM users WHERE id = ${userId} RETURNING id
+    `;
+    return rows.length > 0;
+}

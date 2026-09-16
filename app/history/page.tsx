@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { hasDatabase } from "@/lib/db";
 import { hasGoogleCredentials, isAuthConfigured } from "@/lib/authConfig";
 import HistoryList from "@/components/HistoryList";
+import DeleteAccountControl from "@/components/DeleteAccountControl";
 
 export const metadata = { title: "History" };
 
@@ -45,5 +46,15 @@ export default async function HistoryPage() {
         );
     }
 
-    return <HistoryList />;
+    // The delete control lives here because this is the only page that exists
+    // *because* you have an account -- putting it anywhere else would mean
+    // inventing a settings screen for a single button.
+    return (
+        <>
+            <HistoryList />
+            <div className="mx-auto max-w-3xl px-4 pb-10 sm:px-6">
+                <DeleteAccountControl />
+            </div>
+        </>
+    );
 }
