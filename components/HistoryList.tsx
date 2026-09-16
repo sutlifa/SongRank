@@ -63,7 +63,7 @@ export default function HistoryList() {
             {!error && tournaments === null && <p className="text-sm text-fg-muted">Loading…</p>}
             {tournaments?.length === 0 && (
                 <div className="card p-6 text-center">
-                    <p className="mb-4 text-sm text-fg-muted">No saved tournaments yet.</p>
+                    <p className="mb-4 text-sm text-fg-muted">No saved rankings yet.</p>
                     <Link href="/new" className="btn-primary">
                         Start one
                     </Link>

@@ -24,7 +24,7 @@ const DEPTH_HINTS: Record<RankingDepth, string> = {
 
 /**
  * The "save and resume needs an account" warning, shown before a signed-out
- * (or auth-unconfigured) visitor commits to a tournament -- product decision,
+ * (or auth-unconfigured) visitor commits to a ranking -- product decision,
  * see AGENT-TEAM.md and CLAUDE.md's Ranking engine section: "save and resume
  * should only work on signed in users." Thorough on a large list is
  * thousands of matchups, so losing that progress on a refresh is a real cost,
@@ -37,8 +37,8 @@ function GuestSaveWarning({ authEnabled }: { authEnabled: boolean }) {
             <p className="font-semibold text-accent">Your progress won&apos;t be saved.</p>
             <p className="mt-1 text-fg-muted">
                 {authEnabled
-                    ? "You're not signed in, so this tournament lives only in this browser tab — closing or refreshing it loses your place, however many matchups in you are."
-                    : "This deployment doesn't have sign-in set up, so no tournament can be saved here — it lives only in this browser tab until you close it."}
+                    ? "You're not signed in, so this ranking lives only in this browser tab — closing or refreshing it loses your place, however many matchups in you are."
+                    : "This deployment doesn't have sign-in set up, so no ranking can be saved here — it lives only in this browser tab until you close it."}
             </p>
             {authEnabled && (
                 <Link href="/signin?callbackUrl=/new" className="btn-secondary mt-2 inline-block !px-3 !py-1.5 text-xs">
@@ -87,7 +87,7 @@ export interface DraftSong {
 
 type Tab = "paste" | "search";
 
-/** The two steps of /new: build the list, then the pre-flight check (problem 2) before a tournament can start. */
+/** The two steps of /new: build the list, then the pre-flight check (problem 2) before a ranking can start. */
 type Step = "build" | "preflight";
 
 /** Turns a resolved draft into the real, savable `Song` shape. Pulled out of `proceedToPreflight` so it's one place, not a copy living in both the "just resolved" path and any future re-derivation. */
@@ -187,7 +187,7 @@ export default function NewTournament({
      * preview URL alone.
      */
     const [weakSongIds, setWeakSongIds] = useState<Set<string>>(new Set());
-    /** True only for the brief window between the pre-flight "Start tournament" click and the redirect -- there's no network wait here (saving is local-first), but a double-click shouldn't queue two saves. */
+    /** True only for the brief window between the pre-flight "Start ranking" click and the redirect -- there's no network wait here (saving is local-first), but a double-click shouldn't queue two saves. */
     const [launching, setLaunching] = useState(false);
     /** Whether *this visitor* is actually signed in -- not the same as
      * `authEnabled`, which only says the deployment supports it. Determined
@@ -246,7 +246,7 @@ export default function NewTournament({
         setError(null);
         const cleanSongs = songs.filter((s) => s.title.trim());
         if (cleanSongs.length < 2) {
-            setError("Add at least 2 songs to start a tournament.");
+            setError("Add at least 2 songs to start a ranking.");
             return;
         }
 
@@ -291,7 +291,7 @@ export default function NewTournament({
         setStep("preflight");
     }
 
-    /** The pre-flight screen's own "Start tournament" -- this is the only place a Tournament actually gets created. */
+    /** The pre-flight screen's own "Start ranking" -- this is the only place a Tournament actually gets created. */
     function confirmStart(finalSongs: Song[]) {
         setLaunching(true);
         const trimmedName = name.trim() || "My songs";
@@ -347,7 +347,7 @@ export default function NewTournament({
                 <h1 className="mb-1 text-xl font-bold sm:text-2xl">Check before you start</h1>
                 <p className="mb-6 text-sm text-fg-muted">
                     Every song, with its clip if it has one -- confirm the audio is right before committing to a
-                    full tournament.
+                    full ranking.
                 </p>
                 {!authLoading && !signedIn && (
                     <div className="mb-6">
@@ -378,7 +378,7 @@ export default function NewTournament({
     return (
         <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
             {sessionStatus}
-            <h1 className="mb-1 text-xl font-bold sm:text-2xl">Build your tournament</h1>
+            <h1 className="mb-1 text-xl font-bold sm:text-2xl">Build your ranking</h1>
             <p className="mb-6 text-sm text-fg-muted">
                 Add songs from any combination of the tabs below, then review and start.
             </p>
@@ -426,7 +426,7 @@ export default function NewTournament({
             <div className="card mt-6 space-y-4 p-4 sm:p-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-fg-muted">Tournament name</span>
+                        <span className="mb-1 block text-xs font-medium text-fg-muted">Ranking name</span>
                         <input
                             value={name}
                             onChange={(e) => setName(e.target.value)}

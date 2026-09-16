@@ -112,14 +112,14 @@ export default function AboutPage() {
                 <h2 className="mb-2 text-lg font-semibold">Accounts are optional — saving isn&apos;t</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
                     Building a list and voting through it works fully without signing in. But saving
-                    and resuming a tournament is a signed-in feature: without an account, your
+                    and resuming a ranking is a signed-in feature: without an account, your
                     progress lives only in the current browser tab, and closing or refreshing it
-                    loses your place. A Thorough tournament on a large list is thousands of
+                    loses your place. A Thorough ranking of a large list is thousands of
                     matchups, so that is worth knowing before you start, not after — the build page
                     says so up front if you are not signed in.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Signing in with Google adds saved history: a tournament follows you between
+                    Signing in with Google adds saved history: a ranking follows you between
                     devices and you can come back to a finished ranking later. See the{" "}
                     <Link href="/privacy" className="text-accent hover:underline">
                         privacy page
@@ -129,7 +129,7 @@ export default function AboutPage() {
             </section>
 
             <Link href="/new" className="btn-primary">
-                Start a tournament
+                Start a ranking
             </Link>
         </div>
     );

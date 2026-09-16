@@ -42,7 +42,7 @@ export default async function SignInPage({
                         </p>
                     </div>
                     <Link href="/new" className="btn-primary w-full">
-                        Start a tournament
+                        Start a ranking
                     </Link>
                 </div>
             </div>
@@ -75,7 +75,7 @@ export default async function SignInPage({
                 <div className="space-y-2">
                     <h1 className="text-2xl font-bold">Sign in</h1>
                     <p className="text-sm leading-relaxed text-fg-muted">
-                        Save your tournaments so you can resume an in-progress one or revisit a final
+                        Save your rankings so you can resume an unfinished one or revisit a final
                         ranking from another device. Every tool on this site works without an account —
                         signing in only adds somewhere to keep your work.
                     </p>
@@ -93,7 +93,7 @@ export default async function SignInPage({
                 </form>
 
                 <p className="text-xs leading-relaxed text-fg-muted">
-                    We store your Google account&apos;s name, email and avatar, plus whatever tournaments
+                    We store your Google account&apos;s name, email and avatar, plus whatever rankings
                     you choose to save.
                 </p>
             </div>

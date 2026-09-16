@@ -54,11 +54,11 @@ export default function ResultsView({
                 {sync}
                 <h1 className="mb-2 text-xl font-bold">Results not found</h1>
                 <p className="mb-6 text-sm text-fg-muted">
-                    This link doesn&apos;t match a finished tournament on this device
+                    This link doesn&apos;t match a finished ranking on this device
                     {authEnabled ? " or your saved history" : ""}.
                 </p>
                 <Link href="/new" className="btn-primary">
-                    Start a new tournament
+                    Start a new ranking
                 </Link>
             </div>
         );
@@ -144,7 +144,7 @@ export default function ResultsView({
 
             <div className="mt-8 text-center">
                 <Link href="/new" className="btn-secondary">
-                    Start another tournament
+                    Start another ranking
                 </Link>
             </div>
         </div>

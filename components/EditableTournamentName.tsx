@@ -72,7 +72,7 @@ export default function EditableTournamentName({
         return (
             <div className="flex items-center gap-2">
                 <label htmlFor="tournament-name-input" className="sr-only">
-                    Tournament name
+                    Ranking name
                 </label>
                 <input
                     ref={inputRef}
@@ -101,7 +101,7 @@ export default function EditableTournamentName({
         <button
             type="button"
             onClick={startEditing}
-            aria-label={`Rename tournament, currently "${name}"`}
+            aria-label={`Rename ranking, currently "${name}"`}
             className="group flex max-w-full items-center gap-2 rounded-lg text-left"
         >
             <h1 className="truncate text-xl font-bold sm:text-2xl">{name}</h1>

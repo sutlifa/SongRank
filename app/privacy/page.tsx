@@ -28,11 +28,11 @@ export default function PrivacyPage() {
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">If you do not sign in</h2>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Nothing about your tournament is stored at all, on our servers or in your
+                    Nothing about your ranking is stored at all, on our servers or in your
                     browser. Your song list and votes live only in memory for as long as the browser
                     tab stays open — closing or refreshing it loses them, and we never had a copy.
                     Save and resume is a signed-in feature by design (see below), and the build page
-                    says so before you start a tournament without one.
+                    says so before you start a ranking without one.
                 </p>
             </section>
 
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
                         <strong className="text-fg">Google account ID</strong>.
                     </li>
                     <li>
-                        For each tournament you save: its name, the{" "}
+                        For each ranking you save: its name, the{" "}
                         <strong className="text-fg">list of songs</strong> and the{" "}
                         <strong className="text-fg">record of which song won each matchup</strong>.
                         Rounds, standings and the final ranking are not stored — they are
@@ -101,7 +101,7 @@ export default function PrivacyPage() {
                 <h2 className="mb-2 text-lg font-semibold">Deleting your data</h2>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Being straight with you: there is currently no button in the app that deletes
-                    your account and its saved tournaments. Until there is, ask via{" "}
+                    your account and its saved rankings. Until there is, ask via{" "}
                     <a
                         href="https://github.com/sutlifa/SongRank/issues/new"
                         target="_blank"

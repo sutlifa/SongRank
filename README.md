@@ -22,8 +22,8 @@ round schedule would need.
   shows how settled it is, and a small or lopsided list can finish before its estimated
   matchup count.
 - **Save and resume — signed-in only** — save/resume needs a Google account by product
-  decision; a signed-out tournament lives only in the current browser tab. The build page
-  warns about this prominently before you start, since a large Thorough tournament is
+  decision; a signed-out ranking lives only in the current browser tab. The build page
+  warns about this prominently before you start, since a large Thorough ranking is
   thousands of matchups.
 - **Export** — copy as text, download CSV, or download JSON.
 
@@ -63,8 +63,8 @@ SongRank now uses an **adaptive pairwise ranking** engine instead:
   robin against each other so first place is earned by beating the other top contenders
   head to head, not just inherited from ratings.
 
-Tournaments saved before this change keep replaying through the Swiss engine exactly as
-they always did — a tournament's format is fixed at creation and never silently
+Rankings saved before this change keep replaying through the Swiss engine exactly as
+they always did — a ranking's format is fixed at creation and never silently
 reinterpreted (see `Tournament.format` in `lib/types.ts`).
 
 ## Tech
@@ -80,7 +80,7 @@ npm run dev        # http://localhost:3003
 ```
 
 **It runs with no environment variables set.** Pasting a list, searching, playing a full
-tournament, seeing results, and the copy/CSV/JSON exports all work unconfigured. Each
+ranking, seeing results, and the copy/CSV/JSON exports all work unconfigured. Each
 variable below unlocks exactly one extra feature; anything missing degrades to a plain
 message in the UI rather than a broken button.
 
@@ -121,15 +121,15 @@ node --experimental-strip-types scripts/verify-ranking.ts
 node --experimental-strip-types scripts/verify-swiss.ts
 ```
 
-`verify-ranking.ts` is the adaptive engine's proof: it plays tournaments across a spread of
+`verify-ranking.ts` is the adaptive engine's proof: it plays rankings across a spread of
 sizes up to n = 256 (the true ceiling) under several voting policies and checks that
 matchup counts track the budget formula, no pairing repeats before the pool is exhausted, a
 lopsided field settles early, and — the check that actually proves the ranking works rather
 than merely runs — a seeded true order under low-noise voting produces a final ranking that
 correlates strongly with it.
 
-`verify-swiss.ts` is kept for the legacy engine, which still has to replay tournaments saved
-before the adaptive engine existed: it plays tournaments across n = 2..64 under several
+`verify-swiss.ts` is kept for the legacy engine, which still has to replay rankings saved
+before the adaptive engine existed: it plays rankings across n = 2..64 under several
 voting policies and asserts correct round counts, no duplicate pairings within a round,
 every song paired at most once per round, at most one bye per song, and exactly one
 undefeated champion at the end.

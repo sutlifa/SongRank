@@ -14,7 +14,7 @@ export default function HomePage() {
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                     <Link href="/new" className="btn-primary text-base">
-                        Start a tournament
+                        Start a ranking
                     </Link>
                     <Link href="/history" className="btn-secondary text-base">
                         Your history
@@ -41,7 +41,7 @@ export default function HomePage() {
             </div>
 
             <p className="mt-12 text-center text-sm text-fg-muted">
-                No account needed — sign in only if you want to save a tournament and pick it up later.
+                No account needed — sign in only if you want to save a ranking and pick it up later.
             </p>
         </div>
     );

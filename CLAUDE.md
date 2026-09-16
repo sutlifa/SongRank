@@ -38,7 +38,7 @@ Docs ship in `node_modules/next/dist/docs/` — read
 
 ## Core architecture — read this before changing state handling
 
-**A tournament is `{ songs, votes }` and nothing else.** Rounds, pairings,
+**A ranking (a `Tournament` in code) is `{ songs, votes }` and nothing else.** Rounds, pairings,
 standings, the champion and progress are all *derived* by replaying the vote
 log (`derive()`). Persistence therefore means saving songs + votes; there is
 nothing else to store. Don't add denormalised state — it will drift.

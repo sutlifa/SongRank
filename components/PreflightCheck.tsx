@@ -7,7 +7,7 @@ import ClipPlayer from "./ClipPlayer";
 import SongArt from "./SongArt";
 
 /**
- * The pre-flight step between "build your list" and "start the tournament" --
+ * The pre-flight step between "build your list" and "start the ranking" --
  * problem 2 in the brief. The user's own words: "you can get 120 picks in and
  * finally run into a song that didn't find a linked audio file. That is
  * unacceptable." This screen makes every song's preview status (and, for
@@ -122,7 +122,7 @@ export default function PreflightCheck({
     if (songs.length === 0) {
         return (
             <div className="card p-4 text-center sm:p-5">
-                <p className="text-sm text-fg-muted">Every song was removed. Go back and add some to start a tournament.</p>
+                <p className="text-sm text-fg-muted">Every song was removed. Go back and add some to start a ranking.</p>
                 <button type="button" onClick={onBack} className="btn-secondary mt-3">
                     Back to editing
                 </button>
@@ -147,7 +147,7 @@ export default function PreflightCheck({
                         disabled={starting}
                         className="btn-primary mt-3 w-full text-base sm:w-auto sm:px-8"
                     >
-                        {starting ? "Starting…" : "Start tournament"}
+                        {starting ? "Starting…" : "Start ranking"}
                     </button>
                 </div>
             ) : (
@@ -212,7 +212,7 @@ export default function PreflightCheck({
                         Back to editing
                     </button>
                     <button type="button" onClick={onStart} disabled={starting} className="btn-primary">
-                        {starting ? "Starting…" : "Start tournament"}
+                        {starting ? "Starting…" : "Start ranking"}
                     </button>
                 </div>
             </div>

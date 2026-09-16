@@ -18,13 +18,13 @@ export default async function HistoryPage() {
             <div className="mx-auto max-w-lg px-4 py-16 text-center sm:px-6">
                 <h1 className="mb-2 text-xl font-bold">History isn&apos;t set up yet</h1>
                 <p className="mb-6 text-sm leading-relaxed text-fg-muted">
-                    Saving tournaments needs a database and Google sign-in configured on this
+                    Saving rankings needs a database and Google sign-in configured on this
                     deployment, and {!hasDatabase && !hasGoogleCredentials() ? "neither is" : "one isn't"} right
-                    now. Every tournament still works fully without it — it&apos;s kept on this device
+                    now. Every ranking still works fully without it — it&apos;s kept on this device
                     instead of in your account.
                 </p>
                 <Link href="/new" className="btn-primary">
-                    Start a tournament
+                    Start a ranking
                 </Link>
             </div>
         );

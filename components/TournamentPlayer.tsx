@@ -152,7 +152,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                 also stops its internal resolvedRef from being reset by an
                 unmount/remount as the branches switch. */}
             {sync}
-                Loading your tournament…
+                Loading your ranking…
             </div>
         );
     }
@@ -161,14 +161,14 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
         return (
             <div className="mx-auto max-w-lg px-4 py-16 text-center sm:px-6">
                 {sync}
-                <h1 className="mb-2 text-xl font-bold">Tournament not found</h1>
+                <h1 className="mb-2 text-xl font-bold">Ranking not found</h1>
                 <p className="mb-6 text-sm text-fg-muted">
-                    This link doesn&apos;t match a tournament on this device
+                    This link doesn&apos;t match a ranking on this device
                     {authEnabled ? " or your saved history" : ""}. It may have been played on a
                     different browser, or the link is mistyped.
                 </p>
                 <Link href="/new" className="btn-primary">
-                    Start a new tournament
+                    Start a new ranking
                 </Link>
             </div>
         );
