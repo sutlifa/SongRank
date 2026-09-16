@@ -28,9 +28,18 @@ export async function POST(req: Request) {
         }
 
         const resolved = await resolveSong(title, artist);
-        return NextResponse.json({ preview: resolved?.match ?? null, confidence: resolved?.confidence ?? "none" });
+        // `unreachable` rides along so the client can tell a track Apple does
+        // not have from one we never managed to ask about -- see
+        // ResolveOutcome in lib/itunes.ts. Reporting the second as the first
+        // is how a rate limit came to be displayed as a permanent-sounding
+        // "No preview available for this track."
+        return NextResponse.json({
+            preview: resolved.match,
+            confidence: resolved.confidence,
+            unreachable: resolved.unreachable,
+        });
     } catch (err) {
         console.error("SONG RESOLVE ERROR:", err);
-        return NextResponse.json({ preview: null, confidence: "none" });
+        return NextResponse.json({ preview: null, confidence: "none", unreachable: true });
     }
 }

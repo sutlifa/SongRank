@@ -142,6 +142,15 @@ recording buried under karaoke versions and looking like "iTunes doesn't have it
 scripts/verify-resolve.ts asserts both, and its mock honours `limit` so the
 buried-track test actually bites.
 
+A non-2xx from Apple is NOT an empty result. 429/5xx/timeouts throw
+`UpstreamUnavailableError`, are retried (3 attempts, backoff, honours
+`Retry-After`), and if they never clear, `ResolveOutcome.unreachable` says so —
+which the card turns into "Couldn't reach Apple Music" instead of the false and
+permanent-sounding "No preview available for this track". A genuine 4xx is not
+retried (it is our bad query, and retrying spends the quota the next song
+needs). `resolvePreviews` re-resolves unreachable songs on a second Continue but
+leaves definitive misses alone. Never collapse these back into one path.
+
 ## Deleting
 
 Soft delete via `tournaments.deleted_at`. EVERY read path filters `deleted_at IS

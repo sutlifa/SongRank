@@ -224,7 +224,7 @@ async function runAsyncChecks() {
                 "We Don't Talk About Bruno",
                 "Carolina Gaitan, Mauro Castillo, Adassa, Rhenzy Feliz, Diane Guerrero, Stephanie Beatriz & Encanto Cast"
             );
-            check("resolveSong: bruno resolves via the narrowed query", resolved !== null && resolved.confidence !== "none");
+            check("resolveSong: bruno resolves via the narrowed query", resolved.match !== null && resolved.confidence !== "none");
             check("resolveSong: bruno stops after the first (winning) query -- doesn't fan out further", calls.length === 1, `made ${calls.length} calls: ${JSON.stringify(calls)}`);
             check(
                 "resolveSong: never sent the huge original artist string as a query",
@@ -247,7 +247,7 @@ async function runAsyncChecks() {
         );
         try {
             const resolved = await resolveSong("Heigh-Ho", "The Dwarf Chorus");
-            check("resolveSong: Heigh-Ho resolves via the title-only fallback (generic credit skipped)", resolved !== null);
+            check("resolveSong: Heigh-Ho resolves via the title-only fallback (generic credit skipped)", resolved.match !== null);
             check("resolveSong: never queried with the generic 'Chorus' credit", calls.every((c) => !/chorus/i.test(c)));
         } finally {
             restore();
@@ -262,7 +262,11 @@ async function runAsyncChecks() {
         const restore = installMockFetch({}, calls);
         try {
             const resolved = await resolveSong("Totally Obscure Deep Cut", "Nobody Credited, Someone Else & A Chorus");
-            check("resolveSong: exhausted cascade with no hits -> null", resolved === null);
+            check("resolveSong: exhausted cascade with no hits -> no match", resolved.match === null);
+            check(
+                "resolveSong: a clean miss is NOT reported as unreachable -- Apple answered, it just had nothing",
+                resolved.unreachable === false
+            );
             check("resolveSong: tried more than one query before giving up", calls.length > 1, `made ${calls.length} calls`);
         } finally {
             restore();
@@ -279,7 +283,11 @@ async function runAsyncChecks() {
         }) as typeof fetch;
         try {
             const resolved = await resolveSong("Any Song", "Any Artist");
-            check("resolveSong: unreachable upstream degrades to null rather than throwing", resolved === null);
+            check("resolveSong: unreachable upstream degrades to no match rather than throwing", resolved.match === null);
+            check(
+                "resolveSong: ...and SAYS it was unreachable, so a rate limit is never shown as 'not available'",
+                resolved.unreachable === true
+            );
         } finally {
             globalThis.fetch = originalFetch;
         }
@@ -407,6 +415,76 @@ async function runAsyncChecks() {
             );
         } finally {
             restore();
+        }
+    }
+
+    // -- A rate limit is the case that actually bites in production, and the
+    // one that used to be indistinguishable from an empty catalogue: a 429
+    // came back as `results: []` and the song was labelled "No preview
+    // available for this track". These prove it is now retried, and reported
+    // as unreachable if the retries don't clear it.
+    {
+        let attempts = 0;
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            attempts += 1;
+            return new Response("", { status: 429, headers: { "retry-after": "0" } });
+        }) as typeof fetch;
+        try {
+            const resolved = await resolveSong("Chicken Huntin' (Slaughter Mix)", "Insane Clown Posse");
+            check("rate limit: retried rather than accepted as an empty result", attempts > 1, `${attempts} attempt(s)`);
+            check("rate limit: reported as unreachable, not as a missing track", resolved.unreachable === true);
+            check("rate limit: no bogus match invented", resolved.match === null);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- A 429 that clears on the retry must produce the song, not a miss.
+    // This is the whole point of retrying: the track was always there.
+    {
+        let attempts = 0;
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            attempts += 1;
+            if (attempts === 1) return new Response("", { status: 429, headers: { "retry-after": "0" } });
+            return new Response(
+                JSON.stringify({
+                    results: [
+                        {
+                            trackName: "Chicken Huntin' (Slaughter Mix)",
+                            artistName: "Insane Clown Posse",
+                            previewUrl: "https://example.test/icp.m4a",
+                        },
+                    ],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+        }) as typeof fetch;
+        try {
+            const resolved = await resolveSong("Chicken Huntin' (Slaughter Mix)", "Insane Clown Posse");
+            check("rate limit that clears: the track resolves on the retry", resolved.match?.artist === "Insane Clown Posse");
+            check("rate limit that clears: not reported as unreachable", resolved.unreachable === false);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- A genuine 4xx is us asking a bad question. Retrying it would spend
+    // the rate limit the next song needs, so it must NOT be retried.
+    {
+        let attempts = 0;
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            attempts += 1;
+            return new Response("", { status: 400 });
+        }) as typeof fetch;
+        try {
+            const resolved = await resolveSong("Any Song", "Any Artist");
+            check("a 400 is not retried -- retrying an unanswerable query wastes the quota", attempts <= 4, `${attempts} attempt(s)`);
+            check("a 400 is a clean miss, not an outage", resolved.unreachable === false && resolved.match === null);
+        } finally {
+            globalThis.fetch = originalFetch;
         }
     }
 }

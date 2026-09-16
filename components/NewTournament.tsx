@@ -90,6 +90,12 @@ export interface DraftSong {
         previewUrl: string | null;
         previewSeconds: number | null;
         confidence?: MatchConfidence;
+        /** True when the lookup never got an answer from Apple (a timeout or a
+         * rate limit that survived retries) rather than getting one with
+         * nothing in it -- see ResolveOutcome in lib/itunes.ts. Drives the
+         * note on the card so a temporary outage doesn't read as a permanent
+         * absence. */
+        unreachable?: boolean;
         /**
          * Only ever set when the song came from an existing ranking (a copied
          * list -- see app/new/page.tsx). Both import tabs leave them alone,
@@ -143,7 +149,16 @@ function draftToSong(d: DraftSong): Song {
         artworkUrl: d.resolved?.artworkUrl ?? null,
         previewUrl: d.resolved?.previewUrl ?? null,
         previewSeconds: d.resolved?.previewSeconds ?? null,
-        previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
+        // Three different states, and they used to collapse into one
+        // sentence. "No preview available for this track" is a fact about
+        // Apple's catalogue; saying it when we were rate-limited or timed out
+        // tells the user something false and permanent-sounding about a song
+        // they can find in iTunes themselves.
+        previewNote: d.resolved?.previewUrl
+            ? null
+            : d.resolved?.unreachable
+              ? "Couldn't reach Apple Music — this one may just need another try."
+              : "No preview available for this track.",
         itunesId: d.resolved?.itunesId ?? null,
     };
 }
@@ -153,7 +168,15 @@ async function resolvePreviews(
     drafts: DraftSong[],
     onProgress: (done: number, total: number) => void
 ): Promise<DraftSong[]> {
-    const toResolve = drafts.filter((d) => d.resolved === null);
+    // Never resolved, or resolved only to "we couldn't ask".
+    //
+    // The second half matters and is new. A miss now records HOW it missed, so
+    // `resolved` is no longer null for one -- which would have quietly killed
+    // the free retry someone gets by going back to Build and hitting Continue
+    // again. Retrying an outage is exactly right; retrying a song Apple
+    // genuinely does not have just spends the rate limit that the next song
+    // needs, so a definitive miss is left alone.
+    const toResolve = drafts.filter((d) => d.resolved === null || d.resolved.unreachable === true);
     if (toResolve.length === 0) return drafts;
 
     const resolvedById = new Map<string, DraftSong["resolved"]>();
@@ -182,10 +205,29 @@ async function resolvePreviews(
                               previewSeconds: data.preview.previewSeconds ?? null,
                               confidence: (data.confidence as MatchConfidence | undefined) ?? "none",
                           }
-                        : null
+                        : // A miss still records HOW it missed. `resolved` stays
+                          // falsy for a previewUrl check either way, but the
+                          // note and the pre-flight summary can now tell the
+                          // two apart.
+                          {
+                              artworkUrl: null,
+                              previewUrl: null,
+                              previewSeconds: null,
+                              confidence: "none" as MatchConfidence,
+                              unreachable: data.unreachable === true,
+                          }
                 );
             } catch {
-                resolvedById.set(draft.id, null);
+                // We never even reached our own route -- the user is offline,
+                // or the request was cut off. Same category as an upstream
+                // outage from their point of view.
+                resolvedById.set(draft.id, {
+                    artworkUrl: null,
+                    previewUrl: null,
+                    previewSeconds: null,
+                    confidence: "none" as MatchConfidence,
+                    unreachable: true,
+                });
             }
             done += 1;
             onProgress(done, toResolve.length);

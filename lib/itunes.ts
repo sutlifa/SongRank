@@ -47,6 +47,62 @@ const ITUNES_SEARCH_URL = "https://itunes.apple.com/search";
 /** Generous enough for a slow upstream, short enough that a route never hangs the UI. */
 const TIMEOUT_MS = 6000;
 
+/**
+ * Apple did not answer -- as opposed to answering "nothing matches".
+ *
+ * These are not the same outcome and must never be collapsed into one, which
+ * is exactly what `if (!res.ok) return []` used to do. A 429 from Apple's rate
+ * limiter came back through the whole pipeline as "this track is not in the
+ * catalogue", the song was labelled "No preview available for this track", and
+ * nothing anywhere said otherwise. The bug is invisible by construction: the
+ * user sees a plausible, permanent-sounding explanation for a track they can
+ * find in iTunes themselves.
+ *
+ * Rate limiting is not hypothetical here. One 30-song paste is up to four
+ * cascade queries per song across several concurrent workers -- a burst of
+ * hundreds of requests -- and Apple's search endpoint is metered per IP. The
+ * songs that miss are whichever ones happened to land after the limiter
+ * engaged, which is why it presents as "some songs" rather than a clean
+ * failure.
+ */
+export class UpstreamUnavailableError extends Error {
+    /** Written out longhand rather than as a TypeScript parameter property:
+     * the verify scripts run under `node --experimental-strip-types`, which
+     * rejects that syntax outright. Next's compiler accepts it, so the
+     * shorthand builds fine and breaks every script in scripts/ instead. */
+    readonly reason: string;
+
+    constructor(reason: string) {
+        super(`iTunes lookup failed: ${reason}`);
+        this.name = "UpstreamUnavailableError";
+        this.reason = reason;
+    }
+}
+
+/** Attempts per query, including the first. */
+const MAX_ATTEMPTS = 3;
+/** Base backoff; doubled each attempt, and overridden by `Retry-After`. */
+const RETRY_BASE_MS = 400;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `Retry-After` in milliseconds, when the server sent a usable one.
+ *
+ * Honouring it matters more than the backoff curve: a limiter that says "wait
+ * two seconds" and gets hammered again at 400ms extends the penalty, so
+ * ignoring the header makes the problem it signals worse.
+ */
+function retryAfterMs(res: Response): number | null {
+    const header = res.headers.get("retry-after");
+    if (!header) return null;
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 10_000);
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), 10_000);
+    return null;
+}
+
 interface ITunesTrack {
     trackName?: string;
     artistName?: string;
@@ -118,10 +174,42 @@ async function rawSearch(term: string, limit: number): Promise<SearchResult[]> {
     const url =
         `${ITUNES_SEARCH_URL}?term=${encodeURIComponent(q)}` +
         `&media=music&entity=song&explicit=Yes&limit=${limit}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { results?: ITunesTrack[] };
-    return (data.results ?? []).map(toSearchResult).filter((r): r is SearchResult => r !== null);
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        let res: Response;
+        try {
+            res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+        } catch (err) {
+            // A timeout or a dropped connection. Worth another go; the last
+            // one tells the caller we never got an answer.
+            if (attempt === MAX_ATTEMPTS) {
+                throw new UpstreamUnavailableError(err instanceof Error ? err.message : "network error");
+            }
+            await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+            continue;
+        }
+
+        if (res.ok) {
+            const data = (await res.json()) as { results?: ITunesTrack[] };
+            return (data.results ?? []).map(toSearchResult).filter((r): r is SearchResult => r !== null);
+        }
+
+        // 429 is the one that actually bites, and 5xx is Apple having a
+        // moment: both mean "ask again", not "no such song".
+        const retryable = res.status === 429 || res.status >= 500;
+        if (!retryable) {
+            // A genuine 4xx is us asking a malformed question. Retrying an
+            // unanswerable query just spends the rate limit that the next
+            // song needs, so this really is an empty result.
+            return [];
+        }
+        if (attempt === MAX_ATTEMPTS) throw new UpstreamUnavailableError(`HTTP ${res.status}`);
+        await sleep(retryAfterMs(res) ?? RETRY_BASE_MS * 2 ** (attempt - 1));
+    }
+
+    // Unreachable: every path above either returns or throws on the last
+    // attempt. Here so the function is provably total rather than relying on
+    // the loop bound.
+    throw new UpstreamUnavailableError("retries exhausted");
 }
 
 /** GET /api/songs/search's implementation: free-text search, up to `limit` hits. */
@@ -337,26 +425,55 @@ export interface ResolvedMatch {
  * request per song. Only escalates to a broader query when the current one
  * came back empty or scored "partial" or worse.
  */
-export async function resolveSong(title: string, artist: string): Promise<ResolvedMatch | null> {
+/**
+ * The outcome of a resolution attempt. Always an object, never null, because
+ * "found nothing" and "never got an answer" are different facts and a bare
+ * null cannot tell them apart -- which is precisely how a rate-limited lookup
+ * came to be displayed as "No preview available for this track."
+ */
+export interface ResolveOutcome {
+    /** The best candidate found, or null if there wasn't one. */
+    match: SearchResult | null;
+    /** Always "none" when `match` is null. */
+    confidence: MatchConfidence;
+    /**
+     * True when at least one query in the cascade failed to get an answer from
+     * Apple at all -- a timeout, a dropped connection, or a rate limit that
+     * survived every retry. A caller showing this to a person must say
+     * something different from a clean miss: the track may well exist, we just
+     * never managed to ask.
+     */
+    unreachable: boolean;
+}
+
+export async function resolveSong(title: string, artist: string): Promise<ResolveOutcome> {
     const t = title.trim();
-    if (!t) return null;
+    const miss = (unreachable = false): ResolveOutcome => ({ match: null, confidence: "none", unreachable });
+    if (!t) return miss();
 
     if (fixturesEnabled()) {
         // Fixtures are a fixed, hand-picked 16-song catalogue matched by
         // exact title or a stable hash fallback (see lib/fixtures.ts) -- there
         // is no ambiguity to score, so every fixture resolution counts as
         // "high".
-        return { match: fixtureResolve(title, artist), confidence: "high" };
+        return { match: fixtureResolve(title, artist), confidence: "high", unreachable: false };
     }
 
     const queries = buildResolveQueries(t, artist);
     let best: ResolvedMatch | null = null;
+    let unreachable = false;
 
     for (const q of queries) {
         let candidates: SearchResult[];
         try {
             candidates = await rawSearch(q, RESOLVE_CANDIDATES);
-        } catch {
+        } catch (err) {
+            // Remembered, not swallowed. Every query in the cascade can fail
+            // this way, and if they all do we have learned nothing about the
+            // song -- which is a different report from "Apple has no such
+            // track", and the only one that tells the user it is worth trying
+            // again.
+            if (err instanceof UpstreamUnavailableError) unreachable = true;
             candidates = [];
         }
         for (const candidate of candidates) {
@@ -368,8 +485,10 @@ export async function resolveSong(title: string, artist: string): Promise<Resolv
         if (best && best.confidence === "high") break;
     }
 
-    if (!best || best.confidence === "none") return null;
-    return best;
+    if (!best || best.confidence === "none") return miss(unreachable);
+    // A usable match found despite an earlier hiccup is just a match; the
+    // flag only means anything when we came away empty-handed.
+    return { match: best.match, confidence: best.confidence, unreachable: false };
 }
 
 export interface SuggestedMatch {
