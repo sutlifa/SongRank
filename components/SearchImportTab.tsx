@@ -13,6 +13,9 @@ import SongArt from "./SongArt";
 export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[]) => void }) {
     const [term, setTerm] = useState("");
     const [results, setResults] = useState<SearchResult[]>([]);
+    /** Whether the last search failed to reach Apple at all, as opposed to
+     * reaching it and finding nothing -- see SearchOutcome in lib/itunes.ts. */
+    const [unreachable, setUnreachable] = useState(false);
     const [loading, setLoading] = useState(false);
     const [added, setAdded] = useState<Set<string>>(new Set());
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -35,9 +38,15 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                 // Ignore a response to a since-superseded request -- typing
                 // fast can otherwise let an older, slower response land after
                 // a newer one and flash stale results.
-                if (requestId === requestIdRef.current) setResults(data.results ?? []);
+                if (requestId === requestIdRef.current) {
+                    setResults(data.results ?? []);
+                    setUnreachable(data.unreachable === true);
+                }
             } catch {
-                if (requestId === requestIdRef.current) setResults([]);
+                if (requestId === requestIdRef.current) {
+                    setResults([]);
+                    setUnreachable(true);
+                }
             } finally {
                 if (requestId === requestIdRef.current) setLoading(false);
             }
@@ -49,6 +58,7 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
 
     const visibleResults = term.trim() ? results : [];
     const visibleLoading = term.trim() ? loading : false;
+    const visibleUnreachable = term.trim() ? unreachable : false;
 
     function handleAdd(result: SearchResult) {
         const key = `${result.title}|${result.artist}`;
@@ -83,8 +93,18 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
             />
 
             {visibleLoading && <p className="text-sm text-fg-muted">Searching…</p>}
+            {/* An empty list has two very different causes, and saying "No
+                results" for both is how a rate-limited search convinces
+                someone their song isn't on Apple Music. */}
             {!visibleLoading && term.trim() && visibleResults.length === 0 && (
-                <p className="text-sm text-fg-muted">No results for &quot;{term}&quot;.</p>
+                visibleUnreachable ? (
+                    <p className="text-sm text-danger">
+                        Couldn&apos;t reach Apple Music just now — that&apos;s us, not your search.
+                        Try again in a moment.
+                    </p>
+                ) : (
+                    <p className="text-sm text-fg-muted">No results for &quot;{term}&quot;.</p>
+                )
             )}
 
             <ul className="max-h-80 space-y-1 overflow-y-auto">

@@ -212,17 +212,42 @@ async function rawSearch(term: string, limit: number): Promise<SearchResult[]> {
     throw new UpstreamUnavailableError("retries exhausted");
 }
 
-/** GET /api/songs/search's implementation: free-text search, up to `limit` hits. */
-export async function searchSongs(term: string, limit = 15): Promise<SearchResult[]> {
-    if (!term.trim()) return [];
-    if (fixturesEnabled()) return fixtureSearch(term);
+export interface SearchOutcome {
+    results: SearchResult[];
+    /**
+     * True when Apple never answered -- a timeout, or a rate limit that
+     * survived every retry. Same distinction as `ResolveOutcome.unreachable`
+     * and for the same reason: an empty `results` array means "nothing
+     * matched", and reporting an outage that way tells someone their song
+     * does not exist when it plainly does.
+     *
+     * This path matters more than it looks. It backs the Search tab, the
+     * pre-flight screen's per-song "Change version" box, AND the catalogue
+     * matching pass that runs over a whole pasted list (see
+     * `resolveImportBatch` in lib/parse.ts) -- so a throttled search degrades
+     * a bulk import too, silently, and looked exactly like a list of songs
+     * Apple had never heard of.
+     */
+    unreachable: boolean;
+}
+
+/**
+ * GET /api/songs/search's implementation: free-text search, up to `limit` hits.
+ *
+ * 25 rather than 15: for a title other people have also recorded, the first
+ * page is routinely karaoke and tribute versions, and the recording someone is
+ * actually looking for can sit below a shorter cut-off. Same reasoning as
+ * RESOLVE_CANDIDATES, on the list a human scans rather than the one we score.
+ */
+export async function searchSongs(term: string, limit = 25): Promise<SearchOutcome> {
+    if (!term.trim()) return { results: [], unreachable: false };
+    if (fixturesEnabled()) return { results: fixtureSearch(term), unreachable: false };
     try {
-        return await rawSearch(term, limit);
-    } catch {
-        // Network error, timeout, blocked host, malformed JSON -- all of it
-        // degrades to "no results" rather than a thrown error. See the file
-        // header: this is deliberate, not an oversight.
-        return [];
+        return { results: await rawSearch(term, limit), unreachable: false };
+    } catch (err) {
+        // Still never throws -- callers rely on that -- but it now says which
+        // kind of nothing this is.
+        return { results: [], unreachable: err instanceof UpstreamUnavailableError };
     }
 }
 

@@ -13,12 +13,16 @@ export async function GET(req: Request) {
     const term = new URL(req.url).searchParams.get("term") ?? "";
 
     try {
-        const results = await searchSongs(term);
-        return NextResponse.json({ results });
+        // `unreachable` rides along so the caller can distinguish "Apple has
+        // nothing like that" from "Apple never answered" -- see SearchOutcome
+        // in lib/itunes.ts. Both arrive as an empty array, and only one of
+        // them means the song does not exist.
+        const { results, unreachable } = await searchSongs(term);
+        return NextResponse.json({ results, unreachable });
     } catch (err) {
         // searchSongs already catches its own upstream failures; this is a
         // last-resort net for a bug in this route itself, not the normal path.
         console.error("SONG SEARCH ERROR:", err);
-        return NextResponse.json({ results: [] });
+        return NextResponse.json({ results: [], unreachable: true });
     }
 }

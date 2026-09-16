@@ -410,7 +410,10 @@ async function runFixtureIntegrationCheck() {
     }
     const { searchSongs } = await import("../lib/itunes.ts");
     const parsed = parseSongList("Amber Static - The Faux Tones").songs; // matches a lib/fixtures.ts entry
-    const resolved = await resolveImportBatch(parsed, (term) => searchSongs(term));
+    // searchSongs now reports whether Apple answered at all; resolveImportBatch
+    // only wants the hits, so the outcome is unwrapped here -- the same shape
+    // PasteImportTab's own searchForMatch uses against the route.
+    const resolved = await resolveImportBatch(parsed, async (term) => (await searchSongs(term)).results);
     check("fixture integration: resolves against the real lib/itunes.ts (fixture-backed)", resolved.length === 1);
     check("fixture integration: high confidence on an exact fixture match", resolved[0].confidence === "high");
     check("fixture integration: preview URL comes from the fixture tone generator", Boolean(resolved[0].matched?.previewUrl?.includes("/api/preview/tone")));
