@@ -87,6 +87,25 @@ export interface DraftSong {
 
 type Tab = "paste" | "search";
 
+/**
+ * Fisher-Yates, unbiased: every permutation equally likely. The naive
+ * `sort(() => Math.random() - 0.5)` is not -- it gives a comparator
+ * inconsistent results for the same pair, which leaves the output measurably
+ * skewed toward the input order, and skewing toward the input order is the one
+ * thing this exists to prevent.
+ *
+ * Returns a new array; the caller's list is left alone so the review screen
+ * they just read is not reordered under them.
+ */
+function shuffled<T>(items: T[]): T[] {
+    const out = [...items];
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+}
+
 /** The two steps of /new: build the list, then the pre-flight check (problem 2) before a ranking can start. */
 type Step = "build" | "preflight";
 
@@ -309,7 +328,22 @@ export default function NewTournament({
             clipSeconds,
             format: "adaptive",
             depth,
-            songs: finalSongs,
+            // Shuffled once, here, before the ranking is ever saved.
+            //
+            // Every song starts on an identical rating, so the engine's first
+            // pairings fall through to seed order -- the order the list was
+            // pasted in. Paste a discography and its ten tracks all face each
+            // other in the opening rounds, which wastes the most informative
+            // matchups of the whole run on a single artist and leaves them
+            // carrying early losses that nothing later fully undoes.
+            //
+            // Deliberately done at creation, NOT inside derive(). derive()
+            // replays a saved list and must stay pure: shuffling there would
+            // re-pair every ranking already in progress and rewrite standings
+            // people have earned. Shuffling once, before the array is
+            // persisted, leaves existing rankings untouched by construction --
+            // they keep replaying the exact order they were saved with.
+            songs: shuffled(finalSongs),
             votes: [],
         };
 
