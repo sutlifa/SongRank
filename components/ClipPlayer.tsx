@@ -39,8 +39,18 @@ interface Props {
  * click or a keypress), both of which satisfy browsers' autoplay-gesture
  * requirement and neither of which fires on mount.
  */
+/** Seconds as m:ss, for the elapsed/total readout beside the progress bar. */
+function formatTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+    const whole = Math.floor(seconds);
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
-    { previewUrl, previewSeconds, previewNote, clipSeconds, activeAudioRef, label },
+    // `clipSeconds` is still in Props so callers and saved rankings keep
+    // round-tripping it, but playback no longer shortens to it -- see the window
+    // comment below.
+    { previewUrl, previewSeconds, previewNote, activeAudioRef, label },
     ref
 ) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -73,10 +83,16 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // assumption until the file itself says otherwise -- not an arbitrary
     // guess, but still only a placeholder for the first render.
     const duration = actualDuration ?? previewSeconds ?? 30;
-    const clipStart = Math.min(duration * 0.25, Math.max(0, duration - clipSeconds));
-    const clipEnd = Math.min(duration, clipStart + clipSeconds);
-    const windowStart = mode === "clip" ? clipStart : 0;
-    const windowEnd = mode === "clip" ? clipEnd : duration;
+    // The clip IS the whole preview now. Apple gives us 30 seconds and that is
+    // all the audio there is, so the window runs 0 -> duration: nothing is
+    // withheld, and the progress bar below therefore measures the real thing
+    // someone is listening to rather than a slice of it.
+    //
+    // `clipSeconds` is still accepted and still round-trips through saved
+    // rankings, but it no longer shortens playback -- an older ranking saved
+    // with 10 or 15 plays its full preview like everything else.
+    const windowStart = 0;
+    const windowEnd = duration;
 
     // Reset when the source changes -- e.g. "Change version" swapping a song's
     // recording underneath a mounted player.
@@ -160,8 +176,6 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         // state.
         setProgress(0);
 
-        const target = nextMode === "clip" ? clipStart : 0;
-
         // Two rules collide here, and the order below is the only arrangement
         // that satisfies both. Changing it will reintroduce a bug that has now
         // been fixed twice.
@@ -184,26 +198,12 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         // once the metadata arrives. play() is itself what starts the fetch,
         // and `loadedmetadata` always precedes audible output, so the clip
         // still begins at the right offset rather than from zero.
-        // The clip window is recomputed from the element's own duration rather
-        // than reusing the `target` closed over above. That one comes from
-        // `previewSeconds`, which is a hint; this one comes from the file.
-        //
-        // Clamping the stale target is not enough, and that mistake is worth
-        // recording: with a hint of 210s against a real 30s preview, a clamp
-        // to "just inside the file" put the playhead at 29s, so the clip
-        // played one second and stopped. Recomputing the window means a wrong
-        // hint changes nothing at all -- the quarter-of-the-way-in offset is
-        // taken from whatever the file actually turns out to be.
         const seekToTarget = () => {
-            const real = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null;
-            const safeTarget =
-                nextMode === "full"
-                    ? 0
-                    : real === null
-                      ? target
-                      : Math.min(real * 0.25, Math.max(0, real - clipSeconds));
+            // Always the start of the file: the clip is the entire preview, so
+            // there is no offset to compute and nothing a bad duration hint
+            // could get wrong here any more.
             try {
-                audio.currentTime = safeTarget;
+                audio.currentTime = 0;
             } catch {
                 // Safari can still refuse a seek it deems out of range. Playing
                 // from wherever the element sits beats not playing at all.
@@ -317,11 +317,27 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
                 </button>
             </div>
 
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-bg-soft-2" aria-hidden="true">
+            {/* Bar plus a readout. The bar alone is a 1.5px line with no
+                numbers on it, which is easy to miss entirely and impossible to
+                read precisely -- "how far into this am I" deserves an actual
+                answer, and the elapsed/total pair gives it. */}
+            <div className="mt-2 flex items-center gap-2">
                 <div
-                    className="h-full rounded-full bg-accent"
-                    style={{ width: `${Math.round(progress * 100)}%` }}
-                />
+                    className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-soft-2"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(progress * 100)}
+                    aria-label={`${label} clip progress`}
+                >
+                    <div
+                        className="h-full rounded-full bg-accent transition-[width] duration-150 ease-linear"
+                        style={{ width: `${Math.round(progress * 100)}%` }}
+                    />
+                </div>
+                <span className="shrink-0 font-mono text-[11px] tabular-nums text-fg-muted">
+                    {formatTime(progress * (windowEnd - windowStart))} / {formatTime(windowEnd - windowStart)}
+                </span>
             </div>
 
         </div>

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MAX_SONGS } from "@/lib/swiss";
 import { describeRankingPlan, estimateMatchups, ROUND_ROBIN_CEILING } from "@/lib/ranking";
-import { CLIP_SECONDS, RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
+import { RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
 import type { MatchConfidence } from "@/lib/parse";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { setSessionTournament } from "@/lib/sessionCache";
@@ -167,7 +167,12 @@ export default function NewTournament({
     const [tab, setTab] = useState<Tab>("paste");
     const [songs, setSongs] = useState<DraftSong[]>([]);
     const [name, setName] = useState("");
-    const [clipSeconds, setClipSeconds] = useState<ClipSeconds>(15);
+    // Always the full preview. Apple's previews are 30 seconds and that is the
+    // most audio we are ever given, so there is no upside to offering less --
+    // the old 10/15/30 choice only let someone make their own comparisons
+    // harder. Kept as a value (rather than deleted) because saved rankings
+    // already carry a clipSeconds and the field still round-trips.
+    const clipSeconds: ClipSeconds = 30;
     /** Thorough is the default -- the user's own choice, see CLAUDE.md's
      * Ranking engine section -- and only matters once the field is big enough
      * that the engine isn't already doing a full round robin regardless
@@ -424,7 +429,7 @@ export default function NewTournament({
             </div>
 
             <div className="card mt-6 space-y-4 p-4 sm:p-5">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4">
                     <label className="block">
                         <span className="mb-1 block text-xs font-medium text-fg-muted">Ranking name</span>
                         <input
@@ -434,20 +439,6 @@ export default function NewTournament({
                             maxLength={120}
                             className="input"
                         />
-                    </label>
-                    <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-fg-muted">Clip length</span>
-                        <select
-                            value={clipSeconds}
-                            onChange={(e) => setClipSeconds(Number(e.target.value) as ClipSeconds)}
-                            className="input"
-                        >
-                            {CLIP_SECONDS.map((s) => (
-                                <option key={s} value={s}>
-                                    {s} seconds
-                                </option>
-                            ))}
-                        </select>
                     </label>
                 </div>
 
