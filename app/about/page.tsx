@@ -98,9 +98,15 @@ export default function AboutPage() {
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
                     Clips come from the <strong className="text-fg">iTunes Search API</strong>,
                     which is free and public and returns a 30-second preview for most tracks.
-                    SongRank plays a 15-second window starting a quarter of the way in, which is the
-                    stretch most likely to land on a chorus. You can change the clip length, replay
-                    it, or play the full preview if 15 seconds is not enough.
+                    SongRank plays the whole preview — there is no more audio to be had, so
+                    there is nothing to gain by playing less of it. A progress bar and an
+                    elapsed/total readout show how far through you are, and you can replay a
+                    clip as often as you like before deciding.
+                </p>
+                <p className="text-sm leading-relaxed text-fg-muted">
+                    Playback level is evened out between songs, because mastering loudness
+                    varies enormously between eras and a quieter recording otherwise loses
+                    votes for reasons that have nothing to do with the song.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Some tracks have no preview available. Those songs still appear and are still

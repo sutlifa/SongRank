@@ -14,9 +14,9 @@ round schedule would need.
 - **Tolerant pasting** — handles `Artist - Title`, `Title - Artist`, `Title by Artist`,
   `Title, Artist`, numbered and bulleted lists, quotes and duplicates. Ambiguous rows get
   an editable review step instead of a silent guess.
-- **Preview clips** — a 15-second window from each track's 30-second iTunes preview,
-  starting a quarter of the way in (the most chorus-likely stretch). Length is adjustable;
-  tracks with no preview stay fully votable.
+- **Preview clips** — the full 30-second iTunes preview for each track, with a progress
+  bar and an elapsed/total readout. Loudness is evened out across songs so an old quiet
+  master doesn't lose to a modern loud one. Tracks with no preview stay fully votable.
 - **Keyboard driven** — `A` / `B` play a clip, `←` / `→` vote. Undo any vote.
 - **Stop any time** — the ranking is valid after any number of votes; a progress readout
   shows how settled it is, and a small or lopsided list can finish before its estimated

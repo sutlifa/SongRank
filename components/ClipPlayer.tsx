@@ -30,15 +30,6 @@ interface Props {
     label: string;
 }
 
-/**
- * Plays a 15-second-by-default window starting 25% into a 30s preview -- the
- * most chorus-likely stretch of a typical pop song structure, and a much
- * better bet than the first 15 seconds, which is disproportionately intros
- * and count-ins. Never autoplays: every play, including the keyboard
- * shortcuts, only ever happens in response to an explicit user action (a
- * click or a keypress), both of which satisfy browsers' autoplay-gesture
- * requirement and neither of which fires on mount.
- */
 /** Seconds as m:ss, for the elapsed/total readout beside the progress bar. */
 function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -46,6 +37,17 @@ function formatTime(seconds: number): string {
     return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+/**
+ * Plays the whole 30-second iTunes preview. It used to play a 15-second window
+ * starting a quarter of the way in, on the theory that that was the most
+ * chorus-likely stretch; the simpler answer won, because 30 seconds is all the
+ * audio that exists and withholding half of it only made comparisons harder.
+ *
+ * Never autoplays: every play, including the keyboard shortcuts, happens only
+ * in response to an explicit user action (a click or a keypress), both of which
+ * satisfy browsers' autoplay-gesture requirement and neither of which fires on
+ * mount.
+ */
 const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // `clipSeconds` and `previewSeconds` both stay in Props so callers and
     // saved rankings keep round-tripping them, but neither affects playback any
@@ -63,13 +65,8 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     const [loading, setLoading] = useState(false);
 
     // The real duration, read off the audio element once its metadata loads.
-    // This is the only trustworthy source: `previewSeconds` is a hint from a
-    // catalogue response, and a wrong hint here is severe -- the clip window
-    // is computed from it, so overstating the length seeks past the end of the
-    // file, which the browser answers by firing `ended` (a full progress bar
-    // and silence). That is exactly what happened when this value was derived
-    // from iTunes' `trackTimeMillis`, which measures the whole song rather
-    // than its 30-second preview. Prefer measurement over metadata.
+    // The only trustworthy source there is -- see the `duration` comment below
+    // for why the catalogue's own figure is not used.
     const [actualDuration, setActualDuration] = useState<number | null>(null);
     // Measured volume multiplier for the current preview (1 until known, and
     // 1 forever if it cannot be measured). A ref, not state: nothing renders
@@ -176,7 +173,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
             measuredRef.current = true;
             gainForPreview(previewUrl).then((gain) => {
                 gainRef.current = gain;
-                // The clip is 15 seconds, so waiting for the *next* play to
+                // The clip is only 30 seconds, so waiting for the *next* play to
                 // apply this would often mean never applying it at all.
                 if (audioRef.current && audioRef.current.src.includes(previewUrl.slice(-24))) {
                     audioRef.current.volume = gain;
