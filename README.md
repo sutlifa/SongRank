@@ -17,7 +17,12 @@ round schedule would need.
 - **Preview clips** — the full 30-second iTunes preview for each track, with a progress
   bar and an elapsed/total readout. Loudness is evened out across songs so an old quiet
   master doesn't lose to a modern loud one. Tracks with no preview stay fully votable.
-- **Keyboard driven** — `A` / `B` play a clip, `←` / `→` vote. Undo any vote.
+- **Keyboard driven** — `A` / `B` play a clip, `←` / `→` vote, `C` flips a coin. Undo any
+  vote.
+- **No forced picks** — a matchup you can't separate can be answered "flip a coin", which
+  records a tie. The ratings apply it as an Elo draw, so neither song is credited with a win
+  it didn't earn, and the pair is left out of the head-to-head tiebreak. Ties show in the
+  standings as the third number in `4-2-1`.
 - **Stop any time** — the ranking is valid after any number of votes; a progress readout
   shows how settled it is, and a small or lopsided list can finish before its estimated
   matchup count.
@@ -62,6 +67,9 @@ SongRank now uses an **adaptive pairwise ranking** engine instead:
 - **Decisive #1:** once the main phase ends, the leading few songs play a short extra round
   robin against each other so first place is earned by beating the other top contenders
   head to head, not just inherited from ratings.
+- **Ties are information, not a skip:** an undecided matchup still counts as played and still
+  shrinks both songs' uncertainty — "a listener compared these two and couldn't separate them"
+  really does say something about where they sit. It just says it without inventing a winner.
 
 Rankings saved before this change keep replaying through the Swiss engine exactly as
 they always did — a ranking's format is fixed at creation and never silently

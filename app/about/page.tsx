@@ -24,8 +24,10 @@ export default function AboutPage() {
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Then you vote. Two songs at a time, with a short clip of each so you can refresh
-                    your memory before deciding. One winner per matchup, no ties. When the rounds
-                    are done you get a full ranking, not just a winner, and you can export it.
+                    your memory before deciding. When a matchup is genuinely too close to call,
+                    &ldquo;flip a coin&rdquo; records it as a tie instead of forcing a pick &mdash;
+                    neither song gains or loses ground, and you move on. When the matchups are done
+                    you get a full ranking, not just a winner, and you can export it.
                 </p>
             </section>
 

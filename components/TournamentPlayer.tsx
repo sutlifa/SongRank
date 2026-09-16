@@ -39,13 +39,47 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     const lastMatchupsPlayedRef = useRef(0);
 
     const vote = useCallback(
-        (pairingId: string, winnerId: string) => updateTournament((t) => recordVote(t, pairingId, winnerId)),
+        (pairingId: string, winnerId: string, tie = false) =>
+            updateTournament((t) => recordVote(t, pairingId, winnerId, tie)),
         [updateTournament]
     );
 
     const undo = useCallback(() => updateTournament((t) => undoLastVote(t)), [updateTournament]);
 
     const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
+
+    // Confirmation that the coin flip did something, since the screen moves
+    // straight to the next matchup and otherwise the click would look like it
+    // was swallowed. Cleared on a timer by the effect below.
+    // A counter, not a boolean: two flips in a row have to restart the
+    // timer, and setting a boolean that is already true is a no-op React
+    // never re-renders for, so the effect below would never re-fire.
+    const [flipNote, setFlipNote] = useState(0);
+
+    /**
+     * "Flip a coin": the answer for a matchup the listener genuinely can't
+     * separate.
+     *
+     * Recorded as a tie, so the ratings treat it as a draw and neither song is
+     * credited with a win it didn't earn. The random pick is only what fills
+     * `Vote.winnerId`, which a tie vote still carries -- see its doc comment in
+     * lib/types.ts for why it is present and why it is random rather than
+     * always the A side. Nothing the user sees depends on which way it landed,
+     * because as far as the ranking is concerned it didn't land either way.
+     */
+    const flipCoin = useCallback(
+        (pairingId: string, a: string, b: string) => {
+            vote(pairingId, Math.random() < 0.5 ? a : b, true);
+            setFlipNote((n) => n + 1);
+        },
+        [vote]
+    );
+
+    useEffect(() => {
+        if (flipNote === 0) return;
+        const timer = setTimeout(() => setFlipNote(0), 2600);
+        return () => clearTimeout(timer);
+    }, [flipNote]);
 
     // A tournament that's already finished (resumed from a link, or the last
     // vote just landed) belongs on the results page, not the matchup screen.
@@ -133,11 +167,17 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
             } else if (e.key === "ArrowRight") {
                 e.preventDefault();
                 vote(current.pairingId, current.b);
+            } else if (key === "c" && derived.supportsTies) {
+                // Guarded on supportsTies for the same reason the button is:
+                // a Swiss ranking has no draw to record, so the key must not
+                // quietly do something else there instead.
+                e.preventDefault();
+                flipCoin(current.pairingId, current.a, current.b);
             }
         }
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [derived, vote]);
+    }, [derived, vote, flipCoin]);
 
     if (!resolved) {
         return (
@@ -236,10 +276,44 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                         />
                     </div>
 
+                    {derived.supportsTies && (
+                        <div className="mt-4 flex flex-col items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => flipCoin(current.pairingId, current.a, current.b)}
+                                className="btn-secondary"
+                                title="Records this matchup as a tie: neither song gains or loses ground."
+                            >
+                                🪙 Can&apos;t decide — flip a coin
+                            </button>
+                            <p
+                                // aria-live so the confirmation is announced
+                                // rather than only seen; the element is always
+                                // present (not conditionally rendered) because
+                                // a live region has to exist before its content
+                                // changes for a screen reader to pick it up.
+                                aria-live="polite"
+                                className={`text-xs transition-opacity ${
+                                    flipNote > 0 ? "text-accent opacity-100" : "opacity-0"
+                                }`}
+                            >
+                                {flipNote > 0
+                                    ? "Called it a tie — neither song gained or lost ground."
+                                    : "\u00a0"}
+                            </p>
+                        </div>
+                    )}
+
                     <p className="mt-4 text-center text-xs text-fg-muted">
                         <span className="kbd">A</span> / <span className="kbd">B</span> play or pause a
                         clip · <span className="kbd">Space</span> stop ·{" "}
                         <span className="kbd">←</span> / <span className="kbd">→</span> vote
+                        {derived.supportsTies && (
+                            <>
+                                {" "}
+                                · <span className="kbd">C</span> flip a coin
+                            </>
+                        )}
                     </p>
                 </>
             ) : (

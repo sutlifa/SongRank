@@ -568,6 +568,171 @@ console.log("\nVersion swap invariant (on a finished tournament):");
     );
 }
 
+// ---------------------------------------------------------------------------
+// Ties ("Flip a coin")
+// ---------------------------------------------------------------------------
+//
+// The coin flip records a matchup the listener couldn't separate. The two
+// things that can go wrong are both silent: the draw could be applied as a
+// disguised win (moving ratings as though a preference was expressed), or the
+// new optional `Vote.tie` field could change how a ranking *without* any ties
+// serialises, which would touch every save already in the database.
+
+console.log("\nTies (coin flip):");
+{
+    // 1. A tie between two songs the engine rates identically must move
+    //    neither rating -- there was nothing to learn -- while still banking a
+    //    game for both, so their RD drops.
+    const t0 = makeTournament(2, "thorough");
+    const s0 = deriveRanking(t0);
+    const tied = recordRankingVote(t0, s0.current!.pairingId, s0.current!.a, true);
+    const after = deriveRanking(tied);
+    const [x, y] = after.standings;
+    check(x.rating === y.rating, "tie between equals: ratings diverged");
+    check(x.rating === 1500 && y.rating === 1500, "tie between equals: ratings moved off the start value");
+    check(x.rd < 350 && y.rd < 350, "tie between equals: RD did not drop, so the game wasn't counted");
+    check(x.wins === 0 && x.losses === 0 && y.wins === 0 && y.losses === 0, "tie credited a win or a loss");
+    check(x.ties === 1 && y.ties === 1, "tie not counted for both participants");
+    check(x.songId === "song-0", "tie between equals: order didn't fall back to seed");
+    console.log(`  n=2 tie between equals: both ${x.rating} +/- ${x.rd}, record ${x.wins}-${x.losses}-${x.ties}`);
+
+    // 2. A tie against a song the engine rates HIGHER must pull the two
+    //    toward each other -- the favourite gives up ground, the underdog
+    //    gains it. This is the check that a draw isn't being applied as a
+    //    no-op or as a win in disguise.
+    let t1 = makeTournament(4, "thorough");
+    // song-0 beats song-1 twice over the round robin's opening matchups, so
+    // the two are no longer level by the time they meet again below.
+    for (let i = 0; i < 3; i++) {
+        const st = deriveRanking(t1);
+        if (!st.current) break;
+        const favourite = st.current.a === "song-0" || st.current.b === "song-0" ? "song-0" : st.current.a;
+        t1 = recordRankingVote(t1, st.current.pairingId, favourite);
+    }
+    const before = deriveRanking(t1);
+    const cur = before.current!;
+    const ratingBefore = new Map(before.standings.map((st) => [st.songId, st.rating]));
+    const higher =
+        ratingBefore.get(cur.a)! >= ratingBefore.get(cur.b)! ? cur.a : cur.b;
+    const lower = higher === cur.a ? cur.b : cur.a;
+    if (ratingBefore.get(higher)! === ratingBefore.get(lower)!) {
+        fail("tie-direction setup: the two songs were still level, so there is nothing to check");
+    } else {
+        const drawn = deriveRanking(recordRankingVote(t1, cur.pairingId, cur.a, true));
+        const ratingAfter = new Map(drawn.standings.map((st) => [st.songId, st.rating]));
+        check(ratingAfter.get(higher)! < ratingBefore.get(higher)!, "tie: the favourite did not give up ground");
+        check(ratingAfter.get(lower)! > ratingBefore.get(lower)!, "tie: the underdog did not gain ground");
+        console.log(
+            `  tie vs a higher-rated song: ${higher} ${ratingBefore.get(higher)} -> ${ratingAfter.get(higher)}, ` +
+                `${lower} ${ratingBefore.get(lower)} -> ${ratingAfter.get(lower)}`
+        );
+    }
+
+    // 3. Undo restores a tie's state exactly, same as any other vote.
+    const undone = deriveRanking(undoLastRankingVote(tied));
+    check(
+        JSON.stringify(undone.standings) === JSON.stringify(deriveRanking(t0).standings),
+        "undo of a tie did not restore the previous standings"
+    );
+}
+
+// 4. A whole tournament answered entirely with the coin flip still completes
+//    and still ranks every song. Ties bank games, so RD still falls and the
+//    budget is still consumed -- a tie must never be able to stall the engine.
+{
+    const n = 16;
+    let t = makeTournament(n, "quick");
+    let guard = 0;
+    let tieVotes = 0;
+    for (;;) {
+        const st = deriveRanking(t);
+        if (st.status !== "in_progress") break;
+        if (guard++ > 5000) {
+            fail("all-ties: tournament did not complete within 5000 votes");
+            break;
+        }
+        t = recordRankingVote(t, st.current!.pairingId, st.current!.a, true);
+        tieVotes += 1;
+    }
+    const done = deriveRanking(t);
+    check(done.status === "complete", "all-ties: tournament never completed");
+    check(done.standings.length === n, "all-ties: not every song was ranked");
+    check(done.championId !== null, "all-ties: no champion");
+    check(
+        done.standings.every((st) => st.wins === 0 && st.losses === 0),
+        "all-ties: a win or a loss was credited"
+    );
+    check(
+        done.standings.reduce((sum, st) => sum + st.ties, 0) === tieVotes * 2,
+        "all-ties: tie counts don't add up to two per matchup"
+    );
+    check(
+        new Set(done.standings.map((st) => st.rank)).size === n,
+        "all-ties: ranks are not distinct, so the field isn't fully ordered"
+    );
+    console.log(`  n=${n} answered entirely by coin flip: completed in ${tieVotes} matchups, all ${n} ranked`);
+}
+
+// 5. Backwards compatibility, the check that protects every ranking already
+//    saved: a tournament played without ever using the coin flip must not
+//    write a `tie` key at all, so its serialised vote log is byte-identical
+//    to what the pre-tie engine produced. Ties and wins must also still add
+//    up to exactly the matchups played, mixed together in one tournament.
+{
+    const n = 24;
+    const rng = mulberry32(90210);
+    let t = makeTournament(n, "quick");
+    let decided = 0;
+    let tied = 0;
+    let guard = 0;
+    for (;;) {
+        const st = deriveRanking(t);
+        if (st.status !== "in_progress") break;
+        if (guard++ > 5000) {
+            fail("mixed ties: tournament did not complete within 5000 votes");
+            break;
+        }
+        const cur = st.current!;
+        // Roughly one matchup in five answered "can't decide".
+        if (rng() < 0.2) {
+            t = recordRankingVote(t, cur.pairingId, rng() < 0.5 ? cur.a : cur.b, true);
+            tied += 1;
+        } else {
+            t = recordRankingVote(t, cur.pairingId, pickWinner(cur.a, cur.b, n, "noisy-favourite", rng));
+            decided += 1;
+        }
+    }
+    const done = deriveRanking(t);
+    const totalWins = done.standings.reduce((sum, st) => sum + st.wins, 0);
+    const totalLosses = done.standings.reduce((sum, st) => sum + st.losses, 0);
+    const totalTies = done.standings.reduce((sum, st) => sum + st.ties, 0);
+    check(totalWins === decided, "mixed ties: wins don't equal the decided matchups");
+    check(totalLosses === decided, "mixed ties: losses don't equal the decided matchups");
+    check(totalTies === tied * 2, "mixed ties: ties don't equal two per tied matchup");
+    check(
+        t.votes.filter((v) => v.tie === true).length === tied,
+        "mixed ties: the vote log doesn't carry exactly the ties that were cast"
+    );
+    check(
+        t.votes.filter((v) => v.tie === undefined).length === decided,
+        "mixed ties: a decided vote gained a `tie` key it should not have"
+    );
+    check(
+        JSON.stringify(t.votes.filter((v) => v.tie === undefined)).includes('"tie"') === false,
+        "mixed ties: a decided vote SERIALISES a `tie` key -- every already-saved ranking would change shape"
+    );
+    // Re-deriving the same log twice must produce the same answer; a tie's
+    // random `winnerId` is baked into the log at flip time, never re-rolled.
+    check(
+        JSON.stringify(deriveRanking(t).standings) === JSON.stringify(done.standings),
+        "mixed ties: replay is not deterministic"
+    );
+    console.log(
+        `  n=${n} mixed: ${decided} decided + ${tied} coin flips, records add up, ` +
+            `no \`tie\` key on a decided vote`
+    );
+}
+
 const seconds = ((Date.now() - start) / 1000).toFixed(1);
 console.log(
     `\n${tournaments} tournaments, ${totalMatchups} matchups, ${seconds}s\n` +

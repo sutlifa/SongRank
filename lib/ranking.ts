@@ -31,7 +31,7 @@
 // K that decays as RD shrinks" simplification flagged as acceptable in the
 // brief.
 
-import type { RankingDepth, Tournament } from "./types";
+import type { RankingDepth, Tournament, Vote } from "./types";
 
 // ---------------------------------------------------------------------------
 // Rating model
@@ -131,6 +131,44 @@ function applyResult(ratings: Map<string, RatingState>, winnerId: string, loserI
     loser.gamesPlayed += 1;
     winner.rd = nextRd(winner.gamesPlayed);
     loser.rd = nextRd(loser.gamesPlayed);
+}
+
+/**
+ * Applies one *undecided* matchup -- the "Flip a coin" button, recorded as a
+ * tie -- to both participants' rating state, in place.
+ *
+ * This is the same Elo update as `applyResult` with an actual score of 0.5 for
+ * each side instead of 1/0, which is the standard and correct handling of a
+ * draw: the pair still move toward each other, just far less than a decisive
+ * result would move them, and the underdog gains while the favourite gives up
+ * the same amount. Two songs the engine already rated equally do not move at
+ * all, which is right -- confirming what it already believed teaches it
+ * nothing about their order.
+ *
+ * Crucially this is NOT the same as skipping the matchup. Both songs still
+ * bank a game, so their RD drops and the engine becomes more confident about
+ * them -- because "a listener compared these two directly and could not
+ * separate them" really is evidence about where they sit, and it is the whole
+ * reason a tie is worth storing rather than discarding.
+ */
+function applyDraw(ratings: Map<string, RatingState>, aId: string, bId: string): void {
+    const a = ratings.get(aId);
+    const b = ratings.get(bId);
+    if (!a || !b) return;
+
+    const expectedA = expectedScore(a.rating, b.rating);
+    const kA = kFactor(a.rd);
+    const kB = kFactor(b.rd);
+
+    a.rating += kA * (0.5 - expectedA);
+    // (1 - expectedA) is B's expected score; the two updates are the same
+    // formula, not a sign flip of one another, because K differs per song.
+    b.rating += kB * (0.5 - (1 - expectedA));
+
+    a.gamesPlayed += 1;
+    b.gamesPlayed += 1;
+    a.rd = nextRd(a.gamesPlayed);
+    b.rd = nextRd(b.gamesPlayed);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +529,10 @@ export interface RankingStanding {
     rd: number;
     wins: number;
     losses: number;
+    /** Matchups answered with "Flip a coin" -- counted separately because a
+     * tie is neither a win nor a loss, so folding it into either would make
+     * the record on screen disagree with the matchups actually played. */
+    ties: number;
 }
 
 export interface RankingDerived {
@@ -531,7 +573,7 @@ function emptyDerived(): RankingDerived {
 function singleSongDerived(songId: string): RankingDerived {
     return {
         status: "complete",
-        standings: [{ songId, rank: 1, rating: RATING_START, rd: RD_START, wins: 0, losses: 0 }],
+        standings: [{ songId, rank: 1, rating: RATING_START, rd: RD_START, wins: 0, losses: 0, ties: 0 }],
         championId: songId,
         current: null,
         matchupsPlayed: 0,
@@ -624,13 +666,32 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
     // Everything each song has beaten, so the final ordering can break a tie on
     // a direct comparison the user actually made rather than on aggregates.
     const beat = new Map<string, Set<string>>(ids.map((id) => [id, new Set<string>()]));
+    const ties = new Map<string, number>(ids.map((id) => [id, 0]));
     const played = new Set<string>();
 
-    function applyDecided(winnerId: string, loserId: string): void {
-        applyResult(ratings, winnerId, loserId);
-        wins.set(winnerId, (wins.get(winnerId) ?? 0) + 1);
-        losses.set(loserId, (losses.get(loserId) ?? 0) + 1);
-        beat.get(winnerId)?.add(loserId);
+    /**
+     * Applies one answered matchup. `tie` is `Vote.tie` -- see its doc comment
+     * in lib/types.ts: on a tie the nominal winner/loser split is an arbitrary
+     * coin flip and must not reach anything that would act on it.
+     *
+     * So a tie: updates ratings as a draw, credits neither a win nor a loss,
+     * and stays OUT of `beat` -- the head-to-head tiebreak exists to honour a
+     * judgement the listener actually made, and on this matchup they told us
+     * they had none. It does still land in `played`, because the pair really
+     * were put in front of someone and re-asking a question already answered
+     * "I can't tell" is the least informative matchup available.
+     */
+    function applyDecided(winnerId: string, loserId: string, tie = false): void {
+        if (tie) {
+            applyDraw(ratings, winnerId, loserId);
+            ties.set(winnerId, (ties.get(winnerId) ?? 0) + 1);
+            ties.set(loserId, (ties.get(loserId) ?? 0) + 1);
+        } else {
+            applyResult(ratings, winnerId, loserId);
+            wins.set(winnerId, (wins.get(winnerId) ?? 0) + 1);
+            losses.set(loserId, (losses.get(loserId) ?? 0) + 1);
+            beat.get(winnerId)?.add(loserId);
+        }
         played.add(pairKey(winnerId, loserId));
     }
 
@@ -651,7 +712,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
             if (mainScheduleIndex >= mainSchedule!.length) break;
             const [sa, sb] = mainSchedule![mainScheduleIndex];
             if (vote.pairingId !== `m${mainScheduleIndex}` || (vote.winnerId !== sa && vote.winnerId !== sb)) break;
-            applyDecided(vote.winnerId, vote.winnerId === sa ? sb : sa);
+            applyDecided(vote.winnerId, vote.winnerId === sa ? sb : sa, vote.tie === true);
             mainScheduleIndex += 1;
             mainDecided += 1;
             voteIndex += 1;
@@ -677,7 +738,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
             ) {
                 break;
             }
-            applyDecided(vote.winnerId, vote.winnerId === parsed.a ? parsed.b : parsed.a);
+            applyDecided(vote.winnerId, vote.winnerId === parsed.a ? parsed.b : parsed.a, vote.tie === true);
             mainDecided += 1;
             voteIndex += 1;
             continue;
@@ -706,9 +767,18 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
             }
             const [pa, pb] = playoffSchedule![playoffIndex];
             if (vote.pairingId !== `p${playoffIndex}` || (vote.winnerId !== pa && vote.winnerId !== pb)) break;
-            applyDecided(vote.winnerId, vote.winnerId === pa ? pb : pa);
-            playoffWins!.set(vote.winnerId, (playoffWins!.get(vote.winnerId) ?? 0) + 1);
-            playoffBeat!.get(vote.winnerId)!.add(vote.winnerId === pa ? pb : pa);
+            const loserId = vote.winnerId === pa ? pb : pa;
+            applyDecided(vote.winnerId, loserId, vote.tie === true);
+            if (vote.tie === true) {
+                // Half a win each, the same way a draw scores in any round
+                // robin. Nothing goes into playoffBeat: the head-to-head
+                // fallback below must not be decided by a coin flip.
+                playoffWins!.set(vote.winnerId, (playoffWins!.get(vote.winnerId) ?? 0) + 0.5);
+                playoffWins!.set(loserId, (playoffWins!.get(loserId) ?? 0) + 0.5);
+            } else {
+                playoffWins!.set(vote.winnerId, (playoffWins!.get(vote.winnerId) ?? 0) + 1);
+                playoffBeat!.get(vote.winnerId)!.add(loserId);
+            }
             playoffIndex += 1;
             voteIndex += 1;
             if (playoffIndex >= playoffSchedule!.length) phase = "done";
@@ -818,6 +888,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
             rd: Math.round(r.rd),
             wins: wins.get(id) ?? 0,
             losses: losses.get(id) ?? 0,
+            ties: ties.get(id) ?? 0,
         };
     });
 
@@ -851,15 +922,28 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
 
 /** Records a vote, ignoring it if it doesn't answer the current matchup --
  * mirrors lib/swiss.ts's `recordVote`. */
-export function recordRankingVote(tournament: Tournament, pairingId: string, winnerId: string): Tournament {
+export function recordRankingVote(
+    tournament: Tournament,
+    pairingId: string,
+    winnerId: string,
+    tie = false
+): Tournament {
     const state = deriveRanking(tournament);
     const current = state.current;
     if (!current || current.pairingId !== pairingId) return tournament;
     if (winnerId !== current.a && winnerId !== current.b) return tournament;
 
+    // `tie: true` is written only when it is true, never as `tie: false`.
+    // Every vote saved before ties existed has no such key, and keeping the
+    // decided case byte-identical to what it has always produced means a
+    // ranking played entirely without the coin flip serialises exactly as it
+    // did before this feature -- no diff in anyone's database row, nothing for
+    // a future reader to have to treat as a third state.
+    const vote: Vote = tie ? { pairingId, winnerId, tie: true } : { pairingId, winnerId };
+
     return {
         ...tournament,
-        votes: [...tournament.votes, { pairingId, winnerId }],
+        votes: [...tournament.votes, vote],
         updatedAt: new Date().toISOString(),
     };
 }

@@ -55,7 +55,8 @@ export interface UnifiedCurrentMatchup {
 export interface UnifiedStanding {
     songId: string;
     rank: number;
-    /** "4-0" either way -- wins-losses reads the same regardless of engine. */
+    /** "4-0" either way -- wins-losses reads the same regardless of engine --
+     * or "4-0-1" when the adaptive engine has ties to report. */
     recordLabel: string;
     /** Engine-specific detail: "78% OMW" for Swiss, "1612 ± 40" for adaptive. */
     detailLabel: string;
@@ -69,6 +70,14 @@ export interface UnifiedDerived {
     matchupsPlayed: number;
     matchupsPlanned: number;
     inPlayoffs: boolean;
+    /** True when this engine understands a matchup answered "I can't separate
+     * these" -- i.e. the "Flip a coin" button. Only the adaptive engine does:
+     * Elo has a natural draw, whereas Swiss is built on whole match points,
+     * byes and opponent match-win percentage, none of which have a half. The
+     * player UI hides the button entirely rather than lying to the older
+     * engine, which only ever affects rankings saved before the adaptive
+     * engine existed. */
+    supportsTies: boolean;
     /** Fraction of the ranking confidently settled -- only ever non-null for
      * the adaptive engine, since Swiss has no uncertainty model to derive it
      * from. The UI shows this as "ranking is N% settled" when present. */
@@ -104,6 +113,7 @@ function fromSwiss(t: Tournament): UnifiedDerived {
         matchupsPlayed: d.matchupsPlayed,
         matchupsPlanned: d.matchupsPlanned,
         inPlayoffs: d.inPlayoffs,
+        supportsTies: false,
         confidence: null,
     };
 }
@@ -130,12 +140,15 @@ function fromRanking(t: Tournament): UnifiedDerived {
         standings: d.standings.map((s) => ({
             songId: s.songId,
             rank: s.rank,
-            recordLabel: `${s.wins}-${s.losses}`,
+            // Ties only join the label once there are some, so a ranking
+            // played without the coin flip still reads "4-0", not "4-0-0".
+            recordLabel: s.ties > 0 ? `${s.wins}-${s.losses}-${s.ties}` : `${s.wins}-${s.losses}`,
             detailLabel: `${s.rating} ± ${s.rd}`,
         })),
         matchupsPlayed: d.matchupsPlayed,
         matchupsPlanned: d.matchupsPlanned,
         inPlayoffs: d.inPlayoffs,
+        supportsTies: true,
         confidence: d.confidence,
     };
 }
@@ -146,9 +159,19 @@ export function deriveTournament(t: Tournament): UnifiedDerived {
     return tournamentFormat(t) === "adaptive" ? fromRanking(t) : fromSwiss(t);
 }
 
-export function recordVote(t: Tournament, pairingId: string, winnerId: string): Tournament {
+/**
+ * Records a vote. `tie` is the "Flip a coin" answer -- see `Vote.tie` in
+ * lib/types.ts.
+ *
+ * It is dropped, not translated, for a Swiss tournament: that engine has no
+ * draw (see `UnifiedDerived.supportsTies`), and writing a `tie` flag it will
+ * never read would put a claim in someone's save that nothing honours. The
+ * player UI doesn't offer the button there, so this is a belt-and-braces
+ * guard rather than a path anyone reaches.
+ */
+export function recordVote(t: Tournament, pairingId: string, winnerId: string, tie = false): Tournament {
     return tournamentFormat(t) === "adaptive"
-        ? recordRankingVote(t, pairingId, winnerId)
+        ? recordRankingVote(t, pairingId, winnerId, tie)
         : recordSwissVote(t, pairingId, winnerId);
 }
 

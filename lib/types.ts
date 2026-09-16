@@ -67,6 +67,32 @@ export interface Vote {
     /** The pairing this answered, e.g. "s3-2" (Swiss) or "m41" / "p2" (adaptive). Validated on replay. */
     pairingId: string;
     winnerId: string;
+    /**
+     * True when the listener had no preference and hit "Flip a coin" instead
+     * of picking a side. The adaptive engine then applies the matchup as an
+     * Elo *draw* -- both songs score 0.5, neither is credited with a win or a
+     * loss, and the pair is left out of the head-to-head tiebreak map, because
+     * "I couldn't separate these" is a genuine piece of information and
+     * recording it as a win would be a lie the ratings then act on.
+     *
+     * `winnerId` is still filled in, with a genuinely random one of the two.
+     * That is deliberate on both counts:
+     *
+     *   - Present, so a tie vote is structurally identical to every other vote
+     *     and replay's existing "winnerId must be one of this pairing's two
+     *     participants" validation needs no special case to accept it.
+     *   - Random rather than always the A side, so anything that reads
+     *     `winnerId` without understanding `tie` -- an older client still
+     *     running against a freshly saved ranking, the legacy Swiss engine,
+     *     a future export -- degrades to an unbiased coin flip rather than
+     *     silently handing every undecided matchup to whichever song happened
+     *     to be rendered on the left.
+     *
+     * Optional, like `Tournament.format` and `Song.album`: every vote saved
+     * before this field existed simply has no `tie`, and absent means "a real
+     * decision", which is exactly what those votes were.
+     */
+    tie?: boolean;
 }
 
 /**
