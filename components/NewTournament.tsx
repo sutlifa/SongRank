@@ -96,10 +96,16 @@ function draftToSong(d: DraftSong): Song {
         id: d.id,
         title: d.title.trim(),
         artist: d.artist.trim(),
+        // Neither import tab (paste or search) threads an iTunes album/id
+        // through `DraftSong.resolved` today -- both fields are optional on
+        // `Song` for exactly this reason (see lib/types.ts). A later
+        // "Change version" swap (lib/songVersion.ts) fills them in properly.
+        album: null,
         artworkUrl: d.resolved?.artworkUrl ?? null,
         previewUrl: d.resolved?.previewUrl ?? null,
         previewSeconds: d.resolved?.previewSeconds ?? null,
         previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
+        itunesId: null,
     };
 }
 

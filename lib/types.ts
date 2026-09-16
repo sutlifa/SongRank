@@ -18,10 +18,20 @@ export type ClipSeconds = (typeof CLIP_SECONDS)[number];
  * is still a first-class entrant -- it is voted on by title and artist alone.
  */
 export interface Song {
-    /** Stable within a tournament; used as the key in every pairing and vote. */
+    /**
+     * Stable within a tournament; used as the key in every pairing and vote.
+     * Never touched by a "Change version" swap (see lib/songVersion.ts) --
+     * that is the entire mechanism that makes swapping a recording mid-
+     * tournament safe: every past `Vote.winnerId` and pairing id points at
+     * this, never at title/artist/previewUrl, so nothing about the ranking
+     * can move as long as this stays put.
+     */
     id: string;
     title: string;
     artist: string;
+    /** iTunes `collectionName`. Shown, not used for matching anything. See the
+     * optionality note on `itunesId` below -- the same reasoning applies here. */
+    album?: string | null;
     /** iTunes `artworkUrl100`, upgraded to a larger size when we render it. */
     artworkUrl: string | null;
     /** iTunes `previewUrl` (m4a, 30s), or null when resolution found nothing. */
@@ -34,6 +44,22 @@ export interface Song {
      * reads as a known state rather than a broken one.
      */
     previewNote: string | null;
+    /**
+     * The iTunes track id this recording resolved to, or null (a fixture, an
+     * unmatched paste import, or a tournament saved before this field
+     * existed). Not read by anything load-bearing -- it's carried along
+     * purely so a later "Change version" swap or re-resolve has something
+     * more precise than title/artist text to key off, the same reason
+     * SearchResult already carried it.
+     *
+     * `album` and `itunesId` are both optional (rather than required like
+     * the fields above) for the same reason `Tournament.format` is optional:
+     * every song saved before this pair of fields existed -- in a signed-in
+     * user's database row just as much as a signed-out browser's
+     * localStorage -- simply doesn't have them. Typing them as required
+     * would be a lie about data that already exists.
+     */
+    itunesId?: number | null;
 }
 
 /** A recorded human decision. Votes are the *only* thing we persist about play. */

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipSeconds, SearchResult, Song } from "@/lib/types";
+import { applyVersion } from "@/lib/songVersion";
 import ClipPlayer from "./ClipPlayer";
 import SongArt from "./SongArt";
 
@@ -103,22 +104,14 @@ export default function PreflightCheck({
 
     const suggestions = useSuggestions(pageItems, isUnmatched);
 
+    // Reuses lib/songVersion.ts's `applyVersion` rather than spelling out
+    // "which fields does picking a search result replace" a second time --
+    // this is a pre-tournament edit (no votes exist yet to protect), but
+    // it's the exact same operation the mid-tournament "Change version"
+    // panel performs (see ChangeVersionControl.tsx), so there is exactly one
+    // place that answers "which fields" for both.
     function replaceSong(id: string, result: SearchResult) {
-        onChange(
-            songs.map((s) =>
-                s.id === id
-                    ? {
-                          ...s,
-                          title: result.title,
-                          artist: result.artist,
-                          artworkUrl: result.artworkUrl,
-                          previewUrl: result.previewUrl,
-                          previewSeconds: result.previewSeconds,
-                          previewNote: result.previewUrl ? null : "No preview available for this track.",
-                      }
-                    : s
-            )
-        );
+        onChange(songs.map((s) => (s.id === id ? applyVersion(s, result) : s)));
         onWeakResolved(id);
     }
 

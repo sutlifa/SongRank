@@ -12,7 +12,10 @@ import { useTournamentLoader } from "./useTournamentLoader";
 
 export default function TournamentPlayer({ id, authEnabled }: { id: string; authEnabled: boolean }) {
     const router = useRouter();
-    const { tournament, resolved, updateTournament, renameTournament, sync } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, updateTournament, renameTournament, changeSongVersion, sync } = useTournamentLoader(
+        id,
+        authEnabled
+    );
 
     const leftPlayerRef = useRef<ClipPlayerHandle>(null);
     const rightPlayerRef = useRef<ClipPlayerHandle>(null);
@@ -94,6 +97,17 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
             if (!derived?.current) return;
             const target = e.target as HTMLElement | null;
             if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
+
+            // A "Change version" panel (see ChangeVersionControl, opened from
+            // either SongCard) is a modal stacked above this screen. Its own
+            // search input is already covered by the INPUT check just above,
+            // but focus can land elsewhere inside it -- the "Use this" button,
+            // or nowhere in particular after a click -- and from there an
+            // arrow key must not vote on the matchup sitting underneath, nor
+            // should "a"/"b" start a clip the user can't currently see. Checked
+            // by role rather than threaded through props/state so this stays
+            // decoupled from which card's copy of the panel is open.
+            if (document.querySelector('[role="dialog"]')) return;
 
             const current = derived.current;
             const key = e.key.toLowerCase();
@@ -195,6 +209,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
                             onVote={() => vote(current.pairingId, current.a)}
+                            onChangeVersion={(version) => changeSongVersion(current.a, version)}
                             rematch={current.isRematch}
                             key={`${current.pairingId}-a`}
                         />
@@ -205,6 +220,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
                             onVote={() => vote(current.pairingId, current.b)}
+                            onChangeVersion={(version) => changeSongVersion(current.b, version)}
                             rematch={current.isRematch}
                             key={`${current.pairingId}-b`}
                         />

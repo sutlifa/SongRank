@@ -41,6 +41,7 @@
 import {
     deriveRanking,
     recordRankingVote,
+    undoLastRankingVote,
     mainPhaseBudget,
     estimateMatchups,
     log2Factorial,
@@ -49,6 +50,7 @@ import {
     RANKING_DEPTH_FACTORS,
 } from "../lib/ranking.ts";
 import { MAX_SONGS } from "../lib/swiss.ts";
+import { swapSongVersion } from "../lib/songVersion.ts";
 import type { RankingDepth, Song, Tournament } from "../lib/types.ts";
 
 /** Deterministic PRNG, so a failure is reproducible from its seed alone --
@@ -419,6 +421,152 @@ console.log(
         `champion: ${stress.championId}  correlation: ${rStress.toFixed(3)}`
 );
 check(rStress > 0.85, `n=${MAX_SONGS} stress test: correlation ${rStress.toFixed(3)} is below the 0.85 threshold`);
+
+// --- version swap invariant: the entire claim "Change version" rests on ---
+//
+// A version swap (lib/songVersion.ts) replaces a song's title, artist,
+// album, artwork and preview -- but keeps `id` -- and the whole feature is
+// only safe because nothing in this file keys off any of the replaced
+// fields, only `id`. That's asserted here directly, not just in a comment:
+// play a tournament partway, swap a song mid-flight, and check that the
+// standings, matchup count and next pairing come out byte-for-byte
+// identical to what they were immediately before the swap.
+
+console.log("\nVersion swap invariant (mid-tournament):");
+{
+    const n = 40;
+    const depth: RankingDepth = "thorough";
+    const rng = mulberry32(555001);
+    let tournament = makeTournament(n, depth);
+
+    // Play a chunk of the tournament -- same shape as `play`'s own loop,
+    // but stopping partway so there's a live `current` matchup, an
+    // in-progress vote log, and songs with genuinely differentiated
+    // ratings/RD to swap underneath.
+    for (let i = 0; i < 60; i++) {
+        const state = deriveRanking(tournament);
+        if (state.status !== "in_progress") break;
+        const current = state.current!;
+        const winner = pickWinner(current.a, current.b, n, "noisy-favourite", rng);
+        tournament = recordRankingVote(tournament, current.pairingId, winner);
+    }
+    check(tournament.votes.length > 0, "version-swap setup: expected at least one vote to have been played");
+
+    const before = deriveRanking(tournament);
+    const targetId = tournament.songs[7].id;
+
+    const swapped = swapSongVersion(tournament, targetId, {
+        title: "A Totally Different Recording",
+        artist: "Someone Else Entirely",
+        album: "A Different Album",
+        artworkUrl: "https://example.test/different-art.jpg",
+        previewUrl: "https://example.test/different-preview.m4a",
+        previewSeconds: 45,
+        itunesId: 999999999,
+    });
+
+    check(
+        swapped.songs.find((s) => s.id === targetId)?.title === "A Totally Different Recording",
+        "version swap: title was not replaced on the target song"
+    );
+    check(
+        swapped.songs.map((s) => s.id).join(",") === tournament.songs.map((s) => s.id).join(","),
+        "version swap: song id order/identity changed"
+    );
+    check(swapped.votes === tournament.votes, "version swap: vote log reference changed (a swap must never touch votes)");
+
+    const after = deriveRanking(swapped);
+    check(
+        JSON.stringify(after.standings) === JSON.stringify(before.standings),
+        "version swap: standings changed after a swap that preserved id"
+    );
+    check(
+        JSON.stringify(after.current) === JSON.stringify(before.current),
+        "version swap: next pairing changed after a swap that preserved id"
+    );
+    check(after.matchupsPlayed === before.matchupsPlayed, "version swap: matchupsPlayed changed after a swap that preserved id");
+    check(after.matchupsPlanned === before.matchupsPlanned, "version swap: matchupsPlanned changed after a swap that preserved id");
+    check(after.confidence === before.confidence, "version swap: confidence changed after a swap that preserved id");
+    check(after.championId === before.championId, "version swap: championId changed after a swap that preserved id");
+
+    // Undo must still work exactly the same across a swap: the vote log is
+    // untouched (asserted above via reference equality), so undoing should
+    // land on the identical previous matchup either way.
+    const undoneBefore = deriveRanking(undoLastRankingVote(tournament));
+    const undoneAfter = deriveRanking(undoLastRankingVote(swapped));
+    check(
+        JSON.stringify(undoneAfter.current) === JSON.stringify(undoneBefore.current),
+        "version swap: undo landed on a different matchup after a swap"
+    );
+
+    // A swap on a song id that isn't in the tournament is a documented no-op
+    // (same object back), not a silent corruption -- guards the "stale
+    // reference from a panel left open across a reset" case.
+    const noop = swapSongVersion(tournament, "not-a-real-id", {
+        title: "x",
+        artist: "y",
+        album: null,
+        artworkUrl: null,
+        previewUrl: null,
+        previewSeconds: null,
+        itunesId: null,
+    });
+    check(noop === tournament, "version swap: swapping an unknown song id should return the same tournament reference");
+
+    console.log(
+        `  swapped song ${targetId} mid-tournament (${tournament.votes.length} votes played) -- ` +
+            "standings, current matchup, and every derived count are unchanged"
+    );
+}
+
+// Also prove it on a *finished* tournament -- the results-page use case,
+// where there's no `current` matchup left, only a champion and final
+// standings, both of which must survive a post-completion swap unchanged.
+console.log("\nVersion swap invariant (on a finished tournament):");
+{
+    const n = 12;
+    const depth: RankingDepth = "thorough";
+    const rng = mulberry32(555002);
+    let tournament = makeTournament(n, depth);
+    let guard = 0;
+    for (;;) {
+        const state = deriveRanking(tournament);
+        if (state.status !== "in_progress") break;
+        if (guard++ > 5000) {
+            fail("version-swap (finished) setup: tournament did not complete within 5000 votes");
+            break;
+        }
+        const current = state.current!;
+        const winner = pickWinner(current.a, current.b, n, "noisy-favourite", rng);
+        tournament = recordRankingVote(tournament, current.pairingId, winner);
+    }
+
+    const before = deriveRanking(tournament);
+    check(before.status === "complete", "version-swap (finished) setup: tournament did not finish");
+    check(before.championId !== null, "version-swap (finished) setup: no champion decided");
+
+    const swapped = swapSongVersion(tournament, before.championId!, {
+        title: "Remastered Version",
+        artist: "Someone Else",
+        album: null,
+        artworkUrl: null,
+        previewUrl: null,
+        previewSeconds: null,
+        itunesId: null,
+    });
+    const after = deriveRanking(swapped);
+
+    check(after.status === "complete", "version swap on a finished tournament: status changed");
+    check(after.championId === before.championId, "version swap on a finished tournament: champion changed");
+    check(
+        JSON.stringify(after.standings) === JSON.stringify(before.standings),
+        "version swap on a finished tournament: standings changed"
+    );
+    console.log(
+        `  swapped the champion's recording on a finished n=${n} tournament -- ` +
+            `champion (${after.championId}) and standings unchanged`
+    );
+}
 
 const seconds = ((Date.now() - start) / 1000).toFixed(1);
 console.log(

@@ -8,6 +8,7 @@ import SongArt from "./SongArt";
 import ClipPlayer from "./ClipPlayer";
 import ExportPanel from "./ExportPanel";
 import EditableTournamentName from "./EditableTournamentName";
+import ChangeVersionControl from "./ChangeVersionControl";
 import { useTournamentLoader } from "./useTournamentLoader";
 
 export default function ResultsView({
@@ -18,7 +19,7 @@ export default function ResultsView({
     authEnabled: boolean;
 }) {
     const router = useRouter();
-    const { tournament, resolved, sync, renameTournament } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, sync, renameTournament, changeSongVersion } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
     const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
@@ -112,14 +113,27 @@ export default function ResultsView({
                                     </div>
                                 </div>
 
-                                <div className="sm:ml-auto sm:w-56">
-                                    <ClipPlayer
-                                        previewUrl={song.previewUrl}
-                                        previewSeconds={song.previewSeconds}
-                                        previewNote={song.previewNote}
+                                <div className="flex items-start gap-2 sm:ml-auto">
+                                    <div className="sm:w-56">
+                                        <ClipPlayer
+                                            previewUrl={song.previewUrl}
+                                            previewSeconds={song.previewSeconds}
+                                            previewNote={song.previewNote}
+                                            clipSeconds={tournament.clipSeconds}
+                                            activeAudioRef={activeAudioRef}
+                                            label={song.title}
+                                        />
+                                    </div>
+                                    {/* Results is explicitly one of the two
+                                        places this belongs (AGENT-TEAM.md
+                                        brief): reviewing the final list is
+                                        exactly when a bad recording gets
+                                        noticed. */}
+                                    <ChangeVersionControl
+                                        song={song}
                                         clipSeconds={tournament.clipSeconds}
                                         activeAudioRef={activeAudioRef}
-                                        label={song.title}
+                                        onPick={(version) => changeSongVersion(song.id, version)}
                                     />
                                 </div>
                             </div>

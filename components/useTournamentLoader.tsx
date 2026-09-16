@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { Tournament } from "@/lib/types";
+import type { SearchResult, Tournament } from "@/lib/types";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { getSessionTournament, setSessionTournament } from "@/lib/sessionCache";
 import { tournamentFormat } from "@/lib/tournamentEngine";
+import { swapSongVersion } from "@/lib/songVersion";
 import TournamentServerSync from "./TournamentServerSync";
 
 /**
@@ -53,6 +54,7 @@ export function useTournamentLoader(
     resolved: boolean;
     updateTournament: (updater: (t: Tournament) => Tournament) => void;
     renameTournament: (nextName: string) => void;
+    changeSongVersion: (songId: string, version: SearchResult) => void;
     sync: ReactNode;
 } {
     const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -159,9 +161,70 @@ export function useTournamentLoader(
         [id]
     );
 
+    /**
+     * Swaps which recording one song entry points to -- see
+     * lib/songVersion.ts for the operation itself and the invariant it
+     * rests on (the entry's `id`, which is all any vote or pairing id ever
+     * references, never changes). This is the "Change version" control's
+     * only way to reach tournament state, from either the matchup screen
+     * (components/TournamentPlayer.tsx via components/SongCard.tsx) or the
+     * results screen (components/ResultsView.tsx).
+     *
+     * Deliberately its own targeted update, following `renameTournament`'s
+     * shape immediately above rather than the general-purpose
+     * `updateTournament`: a version swap never changes `votes.length` (see
+     * lib/songVersion.ts -- it only ever touches `songs`), and
+     * TournamentServerSync's autosave (job 2 in that file) is gated
+     * specifically on `votes.length` changing, so a swap made through
+     * `updateTournament` would update this tab's in-memory state and
+     * localStorage but would *never* reach the server for a signed-in user.
+     * This PUTs directly, with the same body shape every other targeted
+     * update in this file sends, so a swap is durable the moment it's made
+     * rather than silently waiting for a vote that might not come for a
+     * while (the user could be on /t/[id]/results, where there's no vote
+     * left to cast at all).
+     */
+    const changeSongVersion = useCallback(
+        (songId: string, version: SearchResult) => {
+            setTournament((prev) => {
+                if (!prev) return prev;
+                const next = swapSongVersion(prev, songId, version);
+                // swapSongVersion returns the same reference, unchanged,
+                // when songId isn't actually in this tournament -- nothing
+                // to persist in that case (see that function's own doc
+                // comment for why this can legitimately happen).
+                if (next === prev) return prev;
+                setSessionTournament(next);
+                if (signedInRef.current) {
+                    saveLocalTournament(next);
+                    fetch(`/api/tournaments/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            name: next.name,
+                            clipSeconds: next.clipSeconds,
+                            format: tournamentFormat(next),
+                            depth: next.depth ?? null,
+                            songs: next.songs,
+                            votes: next.votes,
+                        }),
+                    }).catch(() => {
+                        // Best-effort, same as renameTournament: the swap is
+                        // already safe in this tab's in-memory cache and
+                        // localStorage; a failed PUT just means this
+                        // device's history entry is stale until the next
+                        // successful save.
+                    });
+                }
+                return next;
+            });
+        },
+        [id]
+    );
+
     const sync = authEnabled ? (
         <TournamentServerSync id={id} tournament={tournament} onServerResolved={handleServerResolved} />
     ) : null;
 
-    return { tournament, resolved, updateTournament, renameTournament, sync };
+    return { tournament, resolved, updateTournament, renameTournament, changeSongVersion, sync };
 }
