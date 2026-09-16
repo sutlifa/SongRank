@@ -38,7 +38,8 @@ round schedule would need.
 - **Export** — copy as text, download CSV, or download JSON.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
   always). Public ones show up on `/browse`, friends first. Copy someone's song list into a
-  ranking of your own — their votes don't come with it, and nothing you do touches their
+  ranking of your own — **the songs come across and nothing else**: you pick your own depth
+  before it starts, their votes don't come with it, and nothing you do touches their
   ranking — then compare the two: rank correlation, biggest disagreements, and a full
   side-by-side table.
 - **People** — pick a `@username` and friends can find you without either of you handing out

@@ -155,6 +155,11 @@ once-per-account question.
 
 Friends are one-way and gate nothing; they only order `/browse`.
 
+**A copy inherits the songs and nothing else** — not depth, format or clip
+length. The copier picks depth before it starts; an unreadable choice falls back
+to `DEFAULT_DEPTH`, never to the source's. Inheriting meant one person's Quick
+was silently imposed on everyone who copied their list.
+
 `scripts/verify-sharing.ts` covers all of this against a local Postgres. It
 truncates `users`, so it hard-refuses any non-localhost `DATABASE_URL`.
 

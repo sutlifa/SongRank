@@ -124,6 +124,25 @@ export type RankingDepth = "quick" | "balanced" | "thorough";
 export const RANKING_DEPTHS: readonly RankingDepth[] = ["quick", "balanced", "thorough"];
 
 /**
+ * The depth a new ranking starts on unless its creator says otherwise.
+ *
+ * Named rather than repeated as a literal because it is now read from three
+ * places -- /new's own state, the copy endpoint, and the copy form -- and
+ * "what does a ranking default to" should have one answer rather than three
+ * that happen to agree today.
+ */
+export const DEFAULT_DEPTH: RankingDepth = "thorough";
+
+/**
+ * The clip length every new ranking uses. Always the full preview: Apple gives
+ * us 30 seconds and there is no upside to offering less (see
+ * NewTournament.tsx). Kept as a named value because copies and new rankings
+ * both need it, and because saved rankings still carry the old 10/15 choices
+ * and must keep replaying with them.
+ */
+export const DEFAULT_CLIP_SECONDS: ClipSeconds = 30;
+
+/**
  * The saved shape of a tournament.
  *
  * Note what is *not* here: rounds, pairings, standings, the current matchup,

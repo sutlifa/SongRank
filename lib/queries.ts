@@ -250,10 +250,29 @@ export async function listPublicTournaments(limit = 60): Promise<PublicTournamen
 /**
  * Copies a public ranking's SONG LIST into a new ranking owned by `userId`.
  *
- * The votes are deliberately not copied. The whole point is to rank the same
- * songs yourself and then compare, which starting from someone else's answers
- * would defeat. The new row starts with an empty vote log, which is exactly
- * what a freshly built ranking looks like.
+ * ## A copy inherits the songs and nothing else
+ *
+ * That rule is the whole design, and it is deliberately stricter than the
+ * obvious "copy the row and change the owner":
+ *
+ *   - **The votes stay behind.** The point is to rank the same songs yourself
+ *     and then compare, which starting from someone else's answers would
+ *     defeat. The new row begins with an empty vote log, exactly like a
+ *     freshly built ranking.
+ *   - **The depth is the copier's own choice**, passed in, never read from
+ *     the source. Inheriting it meant someone who picked Quick for a
+ *     throwaway list silently imposed Quick on everyone who copied it, and
+ *     the copier was never shown the choice at all -- they went straight from
+ *     a button to their first matchup.
+ *   - **The format is always the current engine.** A copy is a new ranking. A
+ *     source saved before the adaptive engine existed is still replayed as
+ *     Swiss for its owner (see TournamentFormat in lib/types.ts), but there is
+ *     no reason to start someone new on the old engine in 2026.
+ *   - **The clip length is today's default**, not whatever the source was
+ *     saved with, for the same reason: the 10/15-second options no longer
+ *     exist and a copy should not resurrect one.
+ *   - **The copy is private**, whatever the original was. Copying someone's
+ *     list is not a decision to publish your own answers.
  *
  * The source is left completely untouched -- this is an INSERT of a new row
  * and nothing else. There is no statement in this function that can write to
@@ -262,15 +281,14 @@ export async function listPublicTournaments(limit = 60): Promise<PublicTournamen
  * Song ids are carried over verbatim rather than regenerated, which is what
  * makes lib/compare.ts's exact id matching work later. They are only ever
  * meaningful within one ranking, so two rankings sharing them costs nothing.
- *
- * The copy is private, whatever the original was. Copying someone's list is
- * not a decision to publish your own answers.
  */
 export async function copyTournament(args: {
     userId: number;
     sourceId: string;
     newId: string;
     name: string;
+    depth: RankingDepth;
+    clipSeconds: ClipSeconds;
 }): Promise<boolean> {
     const rows = await sql<{ id: string }[]>`
         INSERT INTO tournaments
@@ -278,9 +296,9 @@ export async function copyTournament(args: {
         SELECT ${args.newId},
                ${args.userId},
                ${args.name},
-               t.clip_seconds,
-               t.format,
-               t.depth,
+               ${args.clipSeconds},
+               'adaptive',
+               ${args.depth},
                t.songs,
                '[]'::jsonb,
                'private',

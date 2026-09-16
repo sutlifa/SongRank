@@ -86,13 +86,11 @@ export default async function PublicRankingPage({ params }: { params: Promise<{ 
                         </Link>
                     </p>
                 ) : (
-                    <>
-                        <CopyListButton tournamentId={row.id} signedIn={viewerId !== null} />
-                        <p className="text-sm text-fg-muted">
-                            Copies the song list into a ranking of your own. Their picks aren&apos;t
-                            copied, and nothing you do can change their ranking.
-                        </p>
-                    </>
+                    <CopyListButton
+                        tournamentId={row.id}
+                        songCount={row.songs.length}
+                        signedIn={viewerId !== null}
+                    />
                 )}
             </div>
 

@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MAX_SONGS } from "@/lib/swiss";
 import { describeRankingPlan, estimateMatchups, ROUND_ROBIN_CEILING } from "@/lib/ranking";
-import { RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
+import {
+    DEFAULT_CLIP_SECONDS,
+    DEFAULT_DEPTH,
+    RANKING_DEPTHS,
+    type ClipSeconds,
+    type RankingDepth,
+    type Song,
+    type Tournament,
+} from "@/lib/types";
 import type { MatchConfidence } from "@/lib/parse";
 import type { StarterSong } from "@/lib/starterLists";
 import { saveLocalTournament } from "@/lib/localTournaments";
@@ -205,12 +213,12 @@ export default function NewTournament({
     // the old 10/15/30 choice only let someone make their own comparisons
     // harder. Kept as a value (rather than deleted) because saved rankings
     // already carry a clipSeconds and the field still round-trips.
-    const clipSeconds: ClipSeconds = 30;
+    const clipSeconds: ClipSeconds = DEFAULT_CLIP_SECONDS;
     /** Thorough is the default -- the user's own choice, see CLAUDE.md's
      * Ranking engine section -- and only matters once the field is big enough
      * that the engine isn't already doing a full round robin regardless
      * (n <= ROUND_ROBIN_CEILING plays every pair once no matter what). */
-    const [depth, setDepth] = useState<RankingDepth>("thorough");
+    const [depth, setDepth] = useState<RankingDepth>(DEFAULT_DEPTH);
     const [starting, setStarting] = useState<{ done: number; total: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [step, setStep] = useState<Step>("build");

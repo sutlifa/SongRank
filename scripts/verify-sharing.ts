@@ -97,7 +97,12 @@ const songs: Song[] = getCuratedStarter("beatles")!.songs.slice(0, 8).map((s, i)
 const save = (userId: number, id: string, name: string, votes: Tournament["votes"] = []) =>
     q.saveTournament({ userId, id, name, clipSeconds: 30, format: "adaptive", depth: "thorough", songs, votes });
 
-await save(alice, "alice-public", "Alice's Beatles");
+/** Alice's list is deliberately saved on QUICK and on the legacy engine, so the
+ * copy tests below can prove a copier inherits neither. */
+const saveQuickSwiss = (userId: number, id: string, name: string) =>
+    q.saveTournament({ userId, id, name, clipSeconds: 15, format: "swiss", depth: null, songs, votes: [] });
+
+await saveQuickSwiss(alice, "alice-public", "Alice's Beatles");
 await save(alice, "alice-private", "Alice's secret list");
 await save(bob, "bob-private", "Bob's private thing");
 await q.setTournamentVisibility(alice, "alice-public", "public");
@@ -123,11 +128,27 @@ console.log(`  private rankings invisible in every read path; feed has ${feed.le
 // --- copying ---------------------------------------------------------------
 console.log("\nCopying a list:");
 check(
-    (await q.copyTournament({ userId: bob, sourceId: "alice-private", newId: "nope", name: "x" })) === false,
+    (await q.copyTournament({
+        userId: bob,
+        sourceId: "alice-private",
+        newId: "nope",
+        name: "x",
+        depth: "thorough",
+        clipSeconds: 30,
+    })) === false,
     "copying a PRIVATE ranking must be refused"
 );
 check(
-    (await q.copyTournament({ userId: bob, sourceId: "alice-public", newId: "bob-copy", name: "Copy" })) === true,
+    (await q.copyTournament({
+        userId: bob,
+        sourceId: "alice-public",
+        newId: "bob-copy",
+        name: "Copy",
+        // Alice's ranking is saved as swiss/quick/15s. Bob asks for thorough
+        // at 30s, and must get exactly that.
+        depth: "thorough",
+        clipSeconds: 30,
+    })) === true,
     "copying a public ranking must work"
 );
 
@@ -138,12 +159,39 @@ check(copy.songs.length === songs.length, "the copy carries the whole song list"
 check(copy.songs[0].id === "song-0", "the copy keeps song ids, which is what lets compare match exactly");
 check((await q.getVisibility(bob, "bob-copy")) === "private", "a copy starts private whatever the original was");
 
+// A copy inherits the SONGS and nothing else -- see copyTournament's header.
+// Alice's source is swiss/quick/15s; every one of these would silently come
+// along if the INSERT went back to selecting the source's columns.
+check(copy.depth === "thorough", `the copier's own depth must be used, got ${copy.depth}`);
+check(copy.format === "adaptive", `a copy runs on the current engine, got ${copy.format}`);
+check(copy.clip_seconds === 30, `a copy uses today's clip length, got ${copy.clip_seconds}`);
+
+const quickCopy = await q.copyTournament({
+    userId: carol,
+    sourceId: "alice-public",
+    newId: "carol-copy",
+    name: "Carol's copy",
+    depth: "quick",
+    clipSeconds: 30,
+});
+check(quickCopy, "a second person can copy the same list");
+check(
+    (await q.getTournament(carol, "carol-copy"))!.depth === "quick",
+    "two people copying the same list can pick different depths"
+);
+
 const original = (await q.getTournament(alice, "alice-public"))!;
 check(
     original.votes.length === 0 && original.name === "Alice's Beatles",
     "the ORIGINAL must be completely untouched by someone copying it"
 );
-console.log("  songs copied, votes left behind, original untouched, copy private");
+check(
+    original.depth === null && original.format === "swiss" && original.clip_seconds === 15,
+    "...including its own depth, format and clip length"
+);
+console.log(
+    "  songs copied; votes, depth, format and clip length all left behind; original untouched; copy private"
+);
 
 // --- play both, then compare ----------------------------------------------
 console.log("\nComparing:");
@@ -169,7 +217,16 @@ function playOut(id: string, preferLater: boolean): Tournament["votes"] {
     }
     return t.votes;
 }
-await save(alice, "alice-public", "Alice's Beatles", playOut("alice-public", false));
+await q.saveTournament({
+    userId: alice,
+    id: "alice-public",
+    name: "Alice's Beatles",
+    clipSeconds: 15,
+    format: "adaptive",
+    depth: "thorough",
+    songs,
+    votes: playOut("alice-public", false),
+});
 await save(bob, "bob-copy", "Copy", playOut("bob-copy", true));
 
 function entries(row: q.TournamentRow): CompareEntry[] {
