@@ -2,6 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ClipSeconds } from "@/lib/types";
+import { gainForPreview } from "@/lib/loudness";
 
 export interface ClipPlayerHandle {
     /** Starts (or restarts) the clip window. Used by the matchup screen's A/B keyboard shortcuts. */
@@ -60,6 +61,11 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // from iTunes' `trackTimeMillis`, which measures the whole song rather
     // than its 30-second preview. Prefer measurement over metadata.
     const [actualDuration, setActualDuration] = useState<number | null>(null);
+    // Measured volume multiplier for the current preview (1 until known, and
+    // 1 forever if it cannot be measured). A ref, not state: nothing renders
+    // from it, and re-rendering the player mid-clip to record a number the
+    // user cannot see would be wasted work.
+    const gainRef = useRef(1);
 
     // 30s is the iTunes preview format's fixed length, so it is the right
     // assumption until the file itself says otherwise -- not an arbitrary
@@ -88,11 +94,32 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         setProgress(0);
         setLoading(false);
         setMode("clip");
-        if (!audio) return;
-        audio.pause();
-        // Only ask for a reload when there is something to load; calling load()
-        // with an empty src makes some browsers log a spurious error.
-        if (previewUrl) audio.load();
+        gainRef.current = 1;
+        if (audio) {
+            audio.volume = 1;
+            audio.pause();
+            // Only ask for a reload when there is something to load; calling
+            // load() with an empty src makes some browsers log a spurious error.
+            if (previewUrl) audio.load();
+        }
+        if (!previewUrl) return;
+
+        // Loudness measurement runs in the background and is never awaited by
+        // anything that starts playback. It is a separate fetch from the
+        // element's own (see lib/loudness.ts for why the element must not be
+        // routed through Web Audio), so a blocked or slow measurement costs
+        // nothing but the normalisation itself.
+        let cancelled = false;
+        gainForPreview(previewUrl).then((gain) => {
+            if (cancelled) return;
+            gainRef.current = gain;
+            // Apply immediately if this song is already playing -- the clip is
+            // 15 seconds, so waiting for the next play would often mean never.
+            if (audioRef.current) audioRef.current.volume = gain;
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [previewUrl]);
 
     useImperativeHandle(ref, () => ({
@@ -117,6 +144,9 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
             activeAudioRef.current.pause();
         }
         activeAudioRef.current = audio;
+        // Re-applied on every play: the element's volume is reset to 1 when the
+        // source changes, and the measurement may have landed since.
+        audio.volume = gainRef.current;
 
         setMode(nextMode);
         // A previous run that reached the end left progress at 1. Clear it now
