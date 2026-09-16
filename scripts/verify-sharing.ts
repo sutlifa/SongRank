@@ -146,59 +146,92 @@ console.log(
         `own rankings excluded per viewer, not globally`
 );
 
-// --- copying ---------------------------------------------------------------
+// --- copying -------------------------------------------------------------
+//
+// Copying is no longer a bespoke INSERT. /new?copy=<id> reads the source with
+// getPublicTournament and the copier builds their own ranking through the
+// ordinary save, so the guarantees now live in two places and both are checked
+// here: the read cannot reach a ranking that was never shared, and the save
+// records a source only when it is a real, public, undeleted ranking.
 console.log("\nCopying a list:");
 check(
-    (await q.copyTournament({
-        userId: bob,
-        sourceId: "alice-private",
-        newId: "nope",
-        name: "x",
-        depth: "thorough",
-        clipSeconds: 30,
-    })) === false,
-    "copying a PRIVATE ranking must be refused"
+    (await q.getPublicTournament("alice-private")) === null,
+    "a PRIVATE ranking cannot be read as a template"
 );
-check(
-    (await q.copyTournament({
-        userId: bob,
-        sourceId: "alice-public",
-        newId: "bob-copy",
-        name: "Copy",
-        // Alice's ranking is saved as swiss/quick/15s. Bob asks for thorough
-        // at 30s, and must get exactly that.
-        depth: "thorough",
-        clipSeconds: 30,
-    })) === true,
-    "copying a public ranking must work"
-);
+const template = (await q.getPublicTournament("alice-public"))!;
+check(template !== null, "a public ranking can be read as a template");
+check(template.songs.length === songs.length, "the template carries the whole song list");
+check(template.songs[0].id === "song-0", "song ids come across, which is what lets compare match exactly");
 
+/** What /new does with a template, minus the UI: the copier's own name, depth
+ * and clip length, an empty vote log, and a credit back to the source. */
+const saveCopy = (
+    userId: number,
+    id: string,
+    name: string,
+    depth: "quick" | "thorough",
+    source: string | null
+) =>
+    q.saveTournament({
+        userId,
+        id,
+        name,
+        clipSeconds: 30,
+        format: "adaptive",
+        depth,
+        songs: template.songs,
+        votes: [],
+        sourceTournamentId: source,
+    });
+
+await saveCopy(bob, "bob-copy", "Bob's own name for it", "thorough", "alice-public");
 const copy = (await q.getTournament(bob, "bob-copy"))!;
 check(copy !== null, "the copy belongs to Bob");
-check(copy.votes.length === 0, "the copy must NOT carry the original's votes");
-check(copy.songs.length === songs.length, "the copy carries the whole song list");
-check(copy.songs[0].id === "song-0", "the copy keeps song ids, which is what lets compare match exactly");
+check(copy.votes.length === 0, "a copy starts with no votes");
+check(copy.name === "Bob's own name for it", "the copier names it whatever they like");
 check((await q.getVisibility(bob, "bob-copy")) === "private", "a copy starts private whatever the original was");
 
-// A copy inherits the SONGS and nothing else -- see copyTournament's header.
-// Alice's source is swiss/quick/15s; every one of these would silently come
-// along if the INSERT went back to selecting the source's columns.
+// Alice's source is saved as swiss / quick / 15s. None of it may come across.
 check(copy.depth === "thorough", `the copier's own depth must be used, got ${copy.depth}`);
 check(copy.format === "adaptive", `a copy runs on the current engine, got ${copy.format}`);
 check(copy.clip_seconds === 30, `a copy uses today's clip length, got ${copy.clip_seconds}`);
 
-const quickCopy = await q.copyTournament({
-    userId: carol,
-    sourceId: "alice-public",
-    newId: "carol-copy",
-    name: "Carol's copy",
-    depth: "quick",
-    clipSeconds: 30,
-});
-check(quickCopy, "a second person can copy the same list");
+await saveCopy(carol, "carol-copy", "Carol's copy", "quick", "alice-public");
 check(
     (await q.getTournament(carol, "carol-copy"))!.depth === "quick",
     "two people copying the same list can pick different depths"
+);
+
+// The source credit is only ever recorded for a ranking that really is public.
+check(
+    (await q.listComparableTournaments(bob, "alice-public")).some((c) => c.id === "bob-copy"),
+    "a copy is credited to its source, so the two can be compared"
+);
+await saveCopy(bob, "bob-bogus", "Bogus source", "thorough", "no-such-ranking");
+check(
+    (await q.getTournament(bob, "bob-bogus")) !== null,
+    "an unknown source id must not fail the save -- it is only an attribution"
+);
+await saveCopy(bob, "bob-sneaky", "Private source", "thorough", "alice-private");
+check(
+    (await q.listComparableTournaments(bob, "alice-private")).every((c) => c.id !== "bob-sneaky"),
+    "a PRIVATE ranking must not be recordable as a source"
+);
+
+// An autosave sends no source at all; the first save's credit must survive it.
+await q.saveTournament({
+    userId: bob,
+    id: "bob-copy",
+    name: "Bob's own name for it",
+    clipSeconds: 30,
+    format: "adaptive",
+    depth: "thorough",
+    songs: template.songs,
+    votes: [],
+});
+check(
+    (await q.listComparableTournaments(bob, "alice-public")).some((c) => c.id === "bob-copy"),
+    "a later autosave must not wipe the source credit"
 );
 
 const original = (await q.getTournament(alice, "alice-public"))!;
@@ -211,7 +244,8 @@ check(
     "...including its own depth, format and clip length"
 );
 console.log(
-    "  songs copied; votes, depth, format and clip length all left behind; original untouched; copy private"
+    "  songs and ids come across; name, depth, format and clip length are the copier's; " +
+        "source credited only when public, and survives autosave; original untouched"
 );
 
 // --- play both, then compare ----------------------------------------------
@@ -248,7 +282,16 @@ await q.saveTournament({
     songs,
     votes: playOut("alice-public", false),
 });
-await save(bob, "bob-copy", "Copy", playOut("bob-copy", true));
+await q.saveTournament({
+    userId: bob,
+    id: "bob-copy",
+    name: "Bob's own name for it",
+    clipSeconds: 30,
+    format: "adaptive",
+    depth: "thorough",
+    songs,
+    votes: playOut("bob-copy", true),
+});
 
 function entries(row: q.TournamentRow): CompareEntry[] {
     const derived = deriveTournament({
@@ -423,15 +466,8 @@ console.log("\nDeleting and restoring:");
         "...and stops being counted on the people directory"
     );
     check(
-        (await q.copyTournament({
-            userId: bob,
-            sourceId: "alice-public",
-            newId: "copy-of-deleted",
-            name: "x",
-            depth: "thorough",
-            clipSeconds: 30,
-        })) === false,
-        "...and cannot be copied"
+        (await q.getPublicTournament("alice-public")) === null,
+        "...and cannot be read as a template to copy"
     );
 
     // An autosave from a tab still open on it must not resurrect it.

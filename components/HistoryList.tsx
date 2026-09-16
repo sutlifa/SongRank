@@ -195,7 +195,9 @@ export default function HistoryList() {
                     <h2 className="text-lg font-semibold">Recently deleted</h2>
                     <p className="mb-3 text-sm text-fg-muted">
                         Deleted rankings are kept here so you can get them back. Restoring one returns
-                        it exactly as it was — every vote, and whether it was public.
+                        it exactly as it was — every vote, and whether it was public.{" "}
+                        <strong className="text-fg">Delete forever</strong> is the irreversible one:
+                        there is no backup to restore from afterwards.
                     </p>
                     <ul className="space-y-2">
                         {deleted.map((t) => (
@@ -229,9 +231,9 @@ export default function HistoryList() {
                                             onClick={() => handlePurge(t.id)}
                                             disabled={busyId === t.id}
                                             className="btn-secondary shrink-0 !bg-danger !px-2 !py-1.5 text-xs !text-danger-fg"
-                                            title="This cannot be undone."
+                                            title="This cannot be undone. There is no backup to restore from."
                                         >
-                                            Delete forever
+                                            {busyId === t.id ? "…" : "Yes, permanently"}
                                         </button>
                                         <button
                                             type="button"
@@ -242,13 +244,19 @@ export default function HistoryList() {
                                         </button>
                                     </span>
                                 ) : (
+                                    // Spelled out rather than an "x". A bare
+                                    // glyph is what made the first delete
+                                    // dangerous -- it reads as "dismiss this
+                                    // row" right up until it isn't -- and this
+                                    // is the one button here with nothing
+                                    // behind it. The words are the warning.
                                     <button
                                         type="button"
                                         onClick={() => setPurgingId(t.id)}
                                         className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs text-danger"
                                         aria-label={`Permanently delete ${t.name}`}
                                     >
-                                        ✕
+                                        Delete forever…
                                     </button>
                                 )}
                             </li>

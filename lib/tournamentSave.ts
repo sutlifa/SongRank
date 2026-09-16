@@ -22,6 +22,7 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
         depth?: unknown;
         songs?: unknown;
         votes?: unknown;
+        sourceTournamentId?: unknown;
     };
 
     if (typeof b.id !== "string" || !b.id.trim()) {
@@ -51,6 +52,16 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
         return NextResponse.json({ error: "That tournament is too large to save" }, { status: 413 });
     }
 
+    // Only a plausibly-shaped id is passed through; whether it names a real,
+    // public, undeleted ranking is decided by the subselect in saveTournament,
+    // which is the only place that can answer it truthfully. A bad value there
+    // becomes null rather than an error, so a stale or mistyped source link
+    // costs the attribution and nothing else.
+    const sourceTournamentId =
+        typeof b.sourceTournamentId === "string" && b.sourceTournamentId.length > 0 && b.sourceTournamentId.length <= 64
+            ? b.sourceTournamentId
+            : null;
+
     await saveTournament({
         userId,
         id: b.id,
@@ -60,6 +71,7 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
         depth,
         songs: b.songs as never,
         votes: b.votes as never,
+        sourceTournamentId,
     });
 
     return NextResponse.json({ ok: true, id: b.id });

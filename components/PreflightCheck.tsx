@@ -364,12 +364,22 @@ function SongRow({
                     </div>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                    {/* "Change version", not "Search manually". Both are the
+                        same operation -- swap this song for a different
+                        recording -- but the old wording only described the
+                        rescue case (a bad automatic match), and read as
+                        nothing at all to someone who simply wants the studio
+                        take instead of the live one. That is now a first-class
+                        reason to be on this screen: a list copied from someone
+                        else arrives with their choice of recording, and
+                        changing it is the point. It also matches the control
+                        of the same name on the matchup and results screens. */}
                     <button
                         type="button"
                         onClick={() => (searching ? closeSearch() : setSearching(true))}
                         className="btn-ghost !px-2 !py-1.5 text-xs"
                     >
-                        {searching ? "Cancel" : "Search manually"}
+                        {searching ? "Cancel" : "Change version"}
                     </button>
                     <button
                         type="button"
@@ -398,7 +408,7 @@ function SongRow({
             {searching && (
                 <div className="mt-3 border-t border-border pt-3">
                     <label htmlFor={`replace-${song.id}`} className="sr-only">
-                        Search for the correct track
+                        Search for a different recording
                     </label>
                     <input
                         id={`replace-${song.id}`}
@@ -406,7 +416,7 @@ function SongRow({
                         autoFocus
                         value={term}
                         onChange={(e) => handleTermChange(e.target.value)}
-                        placeholder="Search for the correct track…"
+                        placeholder="Search for a different recording…"
                         className="input text-sm"
                     />
                     {loading && <p className="mt-2 text-xs text-fg-muted">Searching…</p>}

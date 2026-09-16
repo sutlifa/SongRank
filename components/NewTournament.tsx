@@ -15,7 +15,6 @@ import {
     type Tournament,
 } from "@/lib/types";
 import type { MatchConfidence } from "@/lib/parse";
-import type { StarterSong } from "@/lib/starterLists";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { setSessionTournament } from "@/lib/sessionCache";
 import SessionStatus from "./SessionStatus";
@@ -91,6 +90,16 @@ export interface DraftSong {
         previewUrl: string | null;
         previewSeconds: number | null;
         confidence?: MatchConfidence;
+        /**
+         * Only ever set when the song came from an existing ranking (a copied
+         * list -- see app/new/page.tsx). Both import tabs leave them alone,
+         * which is why they are optional here and default to null in
+         * draftToSong. Carrying them means a copy keeps the album and the
+         * iTunes id the original owner's song had, including after they
+         * used "Change version" to pick a specific recording.
+         */
+        album?: string | null;
+        itunesId?: number | null;
     } | null;
 }
 
@@ -125,15 +134,17 @@ function draftToSong(d: DraftSong): Song {
         title: d.title.trim(),
         artist: d.artist.trim(),
         // Neither import tab (paste or search) threads an iTunes album/id
-        // through `DraftSong.resolved` today -- both fields are optional on
-        // `Song` for exactly this reason (see lib/types.ts). A later
-        // "Change version" swap (lib/songVersion.ts) fills them in properly.
-        album: null,
+        // through `DraftSong.resolved`, so these stay null for a typed or
+        // pasted song -- both fields are optional on `Song` for exactly that
+        // reason (see lib/types.ts), and a later "Change version" swap
+        // (lib/songVersion.ts) fills them in properly. A song copied from an
+        // existing ranking already has them, and keeps them.
+        album: d.resolved?.album ?? null,
         artworkUrl: d.resolved?.artworkUrl ?? null,
         previewUrl: d.resolved?.previewUrl ?? null,
         previewSeconds: d.resolved?.previewSeconds ?? null,
         previewNote: d.resolved?.previewUrl ? null : "No preview available for this track.",
-        itunesId: null,
+        itunesId: d.resolved?.itunesId ?? null,
     };
 }
 
@@ -186,19 +197,36 @@ async function resolvePreviews(
     return drafts.map((d) => (resolvedById.has(d.id) ? { ...d, resolved: resolvedById.get(d.id)! } : d));
 }
 
+/**
+ * A list the visitor arrived with, already resolved on the server by
+ * app/new/page.tsx -- either a ready-made list (/new?starter=<id>, see
+ * lib/starterLists.ts) or a copy of someone's public ranking
+ * (/new?copy=<id>).
+ *
+ * Both land here as ordinary drafts and are then edited, added to, pruned,
+ * renamed and given a depth exactly like a list typed in by hand. That is the
+ * whole point of routing a copy through this screen rather than creating the
+ * ranking straight from the database: a copied list is a starting point, not a
+ * fixed inheritance, and it should be no less yours than one you pasted.
+ */
+export interface Prefill {
+    name: string;
+    songs: DraftSong[];
+    /** "starter" | "copy" -- only changes the wording of the banner. */
+    kind: "starter" | "copy";
+    /** Whose ranking this came from, for a copy. */
+    fromName?: string | null;
+    /** The public ranking this was copied from, recorded on the first save so
+     * the two can be compared later. Null for a ready-made list. */
+    sourceTournamentId?: string | null;
+}
+
 export default function NewTournament({
     authEnabled,
-    starter = null,
+    prefill = null,
 }: {
     authEnabled: boolean;
-    /**
-     * A ready-made list the visitor arrived with, from /new?starter=<id> --
-     * see lib/starterLists.ts. Resolved on the server by app/new/page.tsx, so
-     * by the time it reaches here it is either a real list or null; this
-     * component never has to know that ids can be wrong or that one of the
-     * lists comes off the network.
-     */
-    starter?: { name: string; songs: StarterSong[] } | null;
+    prefill?: Prefill | null;
 }) {
     const router = useRouter();
     const [tab, setTab] = useState<Tab>("paste");
@@ -207,7 +235,7 @@ export default function NewTournament({
     // on the server and on the client's first render, so this is the one case
     // where a non-empty initial state cannot cause a hydration mismatch. The
     // visitor can still rename it -- it is a starting point, not a lock.
-    const [name, setName] = useState(starter?.name ?? "");
+    const [name, setName] = useState(prefill?.name ?? "");
     // Always the full preview. Apple's previews are 30 seconds and that is the
     // most audio we are ever given, so there is no upside to offering less --
     // the old 10/15/30 choice only let someone make their own comparisons
@@ -268,23 +296,12 @@ export default function NewTournament({
      * second sees the flag. (The trap is claiming a flag for work a cleanup can
      * still cancel -- see useTournamentLoader's own note on that.)
      */
-    const starterLoadedRef = useRef(false);
+    const prefillLoadedRef = useRef(false);
     useEffect(() => {
-        if (starterLoadedRef.current || !starter) return;
-        starterLoadedRef.current = true;
-        addSongs(
-            starter.songs.map((s) => ({
-                id: crypto.randomUUID(),
-                title: s.title,
-                artist: s.artist,
-                // Never flagged for review: unlike a pasted line, these were
-                // written as a title and an artist, so there is no guess here
-                // for a human to check.
-                ambiguous: false,
-                resolved: null,
-            }))
-        );
-    }, [starter]);
+        if (prefillLoadedRef.current || !prefill) return;
+        prefillLoadedRef.current = true;
+        addSongs(prefill.songs);
+    }, [prefill]);
 
     function addSongs(incoming: DraftSong[]) {
         setSongs((prev) => {
@@ -426,6 +443,10 @@ export default function NewTournament({
                     depth: tournament.depth,
                     songs: tournament.songs,
                     votes: tournament.votes,
+                    // Only sent here, on the very first save. Every autosave
+                    // afterwards omits it, and saveTournament's ON CONFLICT
+                    // leaves the stored value alone -- see lib/queries.ts.
+                    sourceTournamentId: prefill?.sourceTournamentId ?? null,
                 }),
             }).catch(() => {});
         }
@@ -476,14 +497,20 @@ export default function NewTournament({
                 Add songs from any combination of the tabs below, then review and start.
             </p>
 
-            {starter && (
+            {prefill && (
                 <div className="mb-6 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
                     <p className="font-semibold text-accent">
-                        Loaded “{starter.name}” — {starter.songs.length} songs.
+                        {prefill.kind === "copy" && prefill.fromName
+                            ? `Copied “${prefill.name}” from ${prefill.fromName}`
+                            : `Loaded “${prefill.name}”`}{" "}
+                        — {prefill.songs.length} songs.
                     </p>
                     <p className="mt-1 text-fg-muted">
-                        It&apos;s yours now: add more below, remove anything you don&apos;t know, or
-                        rename it. Nothing starts until you hit Continue.
+                        It&apos;s a starting point, not a copy you&apos;re stuck with: add songs,
+                        remove anything you don&apos;t know, rename it, and pick your own depth
+                        below. You can swap any song for a different recording on the next screen.
+                        {prefill.kind === "copy" && " Nothing you do here touches their ranking."}{" "}
+                        Nothing starts until you hit Continue.
                     </p>
                 </div>
             )}

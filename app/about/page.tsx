@@ -40,8 +40,10 @@ export default function AboutPage() {
                     Rankings are private unless you say otherwise. Make one public and it appears on
                     Browse, where anyone can read it, copy its song list, and rank the same songs
                     themselves — their votes are their own, and nothing they do can change your
-                    ranking. A copy takes the songs and nothing else: whoever copies it chooses how
-                    thorough their own ranking should be, rather than inheriting your answer.
+                    ranking. Their copy is a template, not a duplicate: they can add
+                    and remove songs, swap any of them for a different recording, rename it and
+                    choose how thorough their own ranking should be, rather than inheriting your
+                    answers.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Once you have both ranked the same list, comparing the two shows how closely you

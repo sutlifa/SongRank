@@ -37,10 +37,11 @@ round schedule would need.
   thousands of matchups.
 - **Export** — copy as text, download CSV, or download JSON.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
-  always). Public ones show up on `/browse`, friends first. Copy someone's song list into a
-  ranking of your own — **the songs come across and nothing else**: you pick your own depth
-  before it starts, their votes don't come with it, and nothing you do touches their
-  ranking — then compare the two: rank correlation, biggest disagreements, and a full
+  always). Public ones show up on `/browse`, friends first. Take someone's song list as a
+  **template**: it opens in the normal build screen, where you can add and remove songs, swap
+  any of them for a different recording, rename it and pick your own depth. **The songs come
+  across and nothing else** — not their votes, not their depth — and nothing you do touches
+  their ranking. Then compare the two: rank correlation, biggest disagreements, and a full
   side-by-side table.
 - **People** — pick a `@username` and friends can find you without either of you handing out
   an email address. Search by username or display name. Anyone signed in without a handle gets
@@ -152,6 +153,15 @@ from a tab still open on a deleted ranking can't quietly resurrect it.
 `tournaments.visibility` defaults to `'private'`, on the column and on the `ALTER` — every
 row that already existed was saved by someone who was never asked, so nothing becomes
 visible without an explicit act by its owner.
+
+Copying someone's list and starting from a ready-made list are the **same code path**:
+`/new?copy=<id>` and `/new?starter=<id>` both resolve server-side into a `Prefill` of ordinary
+drafts, and everything after that — editing, the pre-flight check, the depth choice, the
+shuffle and the save — is the flow a hand-typed list goes through. A copy used to be a bespoke
+`INSERT` that dropped you straight on your first matchup, which is how it ended up inheriting
+the other person's depth and engine. There is now one path to keep working rather than two.
+A copied song keeps its id (so `lib/compare.ts` can match the two rankings exactly) and its
+`resolved` fields (so Continue doesn't re-look-up a recording its owner deliberately chose).
 
 Access control lives in the SQL, not in a caller. `getPublicTournament` has no `userId`
 parameter at all and filters on `visibility = 'public'` itself, so there is no version of

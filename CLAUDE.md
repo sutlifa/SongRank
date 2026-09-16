@@ -163,10 +163,16 @@ once-per-account question.
 
 Friends are one-way and gate nothing; they only order `/browse`.
 
-**A copy inherits the songs and nothing else** — not depth, format or clip
-length. The copier picks depth before it starts; an unreadable choice falls back
-to `DEFAULT_DEPTH`, never to the source's. Inheriting meant one person's Quick
-was silently imposed on everyone who copied their list.
+**A copy is a template, not an inheritance.** `/new?copy=<id>` and
+`/new?starter=<id>` are one path: both become a `Prefill` of drafts and go
+through the ordinary build + pre-flight + save. So a copier edits songs, swaps
+recordings, renames and picks their own depth. Songs keep their ids (compare
+matching) and their `resolved` fields (don't re-resolve a chosen recording).
+Nothing but the songs comes across — never depth, format or clip length.
+`source_tournament_id` is set only on the first save, via a subselect that
+requires the source be public and undeleted, and is never touched by the
+ON CONFLICT so autosaves can't wipe it. Do NOT reintroduce a bespoke copy
+endpoint.
 
 `scripts/verify-sharing.ts` covers all of this against a local Postgres. It
 truncates `users`, so it hard-refuses any non-localhost `DATABASE_URL`.

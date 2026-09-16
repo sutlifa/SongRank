@@ -88,9 +88,16 @@ export async function saveTournament(args: {
     depth: RankingDepth | null;
     songs: Song[];
     votes: Vote[];
+    /**
+     * The public ranking this one was built from, when it was started as a
+     * copy of someone else's list. Only meaningful on the first save; see the
+     * subselect below and the ON CONFLICT clause, which deliberately leaves it
+     * alone afterwards.
+     */
+    sourceTournamentId?: string | null;
 }): Promise<void> {
     await sql`
-        INSERT INTO tournaments (id, user_id, name, clip_seconds, format, depth, songs, votes)
+        INSERT INTO tournaments (id, user_id, name, clip_seconds, format, depth, songs, votes, source_tournament_id)
         VALUES (
             ${args.id},
             ${args.userId},
@@ -99,7 +106,17 @@ export async function saveTournament(args: {
             ${args.format},
             ${args.depth},
             ${sql.json(args.songs as unknown as postgres.JSONValue)},
-            ${sql.json(args.votes as unknown as postgres.JSONValue)}
+            ${sql.json(args.votes as unknown as postgres.JSONValue)},
+            -- A subselect rather than the raw value, for two reasons at once.
+            -- The column is a foreign key, so an id that does not exist would
+            -- fail the whole INSERT and turn "I mistyped a link" into a 500.
+            -- And the WHERE enforces the actual rule -- you may only credit a
+            -- PUBLIC, undeleted ranking as your source -- in the one place it
+            -- cannot be forgotten. Anything else, including null, yields null.
+            (SELECT src.id FROM tournaments src
+              WHERE src.id = ${args.sourceTournamentId ?? null}
+                AND src.visibility = 'public'
+                AND src.deleted_at IS NULL)
         )
         -- The deleted_at check in the WHERE below sits alongside the
         -- ownership check: a background autosave, from a tab still open on a
@@ -114,6 +131,10 @@ export async function saveTournament(args: {
           depth = EXCLUDED.depth,
           songs = EXCLUDED.songs,
           votes = EXCLUDED.votes,
+          -- source_tournament_id is deliberately NOT updated. It records how
+          -- this ranking began, which cannot change, and every autosave after
+          -- the first sends no source at all -- so copying it from EXCLUDED
+          -- would wipe the attribution on the very next vote.
           updated_at = now()
         WHERE tournaments.user_id = ${args.userId} AND tournaments.deleted_at IS NULL
     `;
@@ -322,69 +343,6 @@ export async function listPublicTournaments(
         ORDER BY t.updated_at DESC
         LIMIT ${limit}
     `;
-}
-
-/**
- * Copies a public ranking's SONG LIST into a new ranking owned by `userId`.
- *
- * ## A copy inherits the songs and nothing else
- *
- * That rule is the whole design, and it is deliberately stricter than the
- * obvious "copy the row and change the owner":
- *
- *   - **The votes stay behind.** The point is to rank the same songs yourself
- *     and then compare, which starting from someone else's answers would
- *     defeat. The new row begins with an empty vote log, exactly like a
- *     freshly built ranking.
- *   - **The depth is the copier's own choice**, passed in, never read from
- *     the source. Inheriting it meant someone who picked Quick for a
- *     throwaway list silently imposed Quick on everyone who copied it, and
- *     the copier was never shown the choice at all -- they went straight from
- *     a button to their first matchup.
- *   - **The format is always the current engine.** A copy is a new ranking. A
- *     source saved before the adaptive engine existed is still replayed as
- *     Swiss for its owner (see TournamentFormat in lib/types.ts), but there is
- *     no reason to start someone new on the old engine in 2026.
- *   - **The clip length is today's default**, not whatever the source was
- *     saved with, for the same reason: the 10/15-second options no longer
- *     exist and a copy should not resurrect one.
- *   - **The copy is private**, whatever the original was. Copying someone's
- *     list is not a decision to publish your own answers.
- *
- * The source is left completely untouched -- this is an INSERT of a new row
- * and nothing else. There is no statement in this function that can write to
- * the ranking being copied.
- *
- * Song ids are carried over verbatim rather than regenerated, which is what
- * makes lib/compare.ts's exact id matching work later. They are only ever
- * meaningful within one ranking, so two rankings sharing them costs nothing.
- */
-export async function copyTournament(args: {
-    userId: number;
-    sourceId: string;
-    newId: string;
-    name: string;
-    depth: RankingDepth;
-    clipSeconds: ClipSeconds;
-}): Promise<boolean> {
-    const rows = await sql<{ id: string }[]>`
-        INSERT INTO tournaments
-            (id, user_id, name, clip_seconds, format, depth, songs, votes, visibility, source_tournament_id)
-        SELECT ${args.newId},
-               ${args.userId},
-               ${args.name},
-               ${args.clipSeconds},
-               'adaptive',
-               ${args.depth},
-               t.songs,
-               '[]'::jsonb,
-               'private',
-               t.id
-        FROM tournaments t
-        WHERE t.id = ${args.sourceId} AND t.visibility = 'public' AND t.deleted_at IS NULL
-        RETURNING id
-    `;
-    return rows.length > 0;
 }
 
 /**
