@@ -70,7 +70,7 @@ function toSearchResult(song: FixtureSong): SearchResult {
         // nothing fixture-specific to fake here.
         artworkUrl: null,
         previewUrl: `/api/preview/tone?freq=${song.freq}&wave=${song.wave}&id=${song.id}`,
-        previewSeconds: 30,
+        previewSeconds: null,
         itunesId: null,
     };
 }

@@ -41,10 +41,20 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // looks inert for a second is what makes people click it twice.
     const [loading, setLoading] = useState(false);
 
-    // iTunes doesn't always report a preview length; 30s is the format's
-    // fixed length in every case we've seen, so it's a safe assumption when
-    // the field is missing rather than an arbitrary guess.
-    const duration = previewSeconds ?? 30;
+    // The real duration, read off the audio element once its metadata loads.
+    // This is the only trustworthy source: `previewSeconds` is a hint from a
+    // catalogue response, and a wrong hint here is severe -- the clip window
+    // is computed from it, so overstating the length seeks past the end of the
+    // file, which the browser answers by firing `ended` (a full progress bar
+    // and silence). That is exactly what happened when this value was derived
+    // from iTunes' `trackTimeMillis`, which measures the whole song rather
+    // than its 30-second preview. Prefer measurement over metadata.
+    const [actualDuration, setActualDuration] = useState<number | null>(null);
+
+    // 30s is the iTunes preview format's fixed length, so it is the right
+    // assumption until the file itself says otherwise -- not an arbitrary
+    // guess, but still only a placeholder for the first render.
+    const duration = actualDuration ?? previewSeconds ?? 30;
     const clipStart = Math.min(duration * 0.25, Math.max(0, duration - clipSeconds));
     const clipEnd = Math.min(duration, clipStart + clipSeconds);
     const windowStart = mode === "clip" ? clipStart : 0;
@@ -95,9 +105,26 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         // once the metadata arrives. play() is itself what starts the fetch,
         // and `loadedmetadata` always precedes audible output, so the clip
         // still begins at the right offset rather than from zero.
+        // The clip window is recomputed from the element's own duration rather
+        // than reusing the `target` closed over above. That one comes from
+        // `previewSeconds`, which is a hint; this one comes from the file.
+        //
+        // Clamping the stale target is not enough, and that mistake is worth
+        // recording: with a hint of 210s against a real 30s preview, a clamp
+        // to "just inside the file" put the playhead at 29s, so the clip
+        // played one second and stopped. Recomputing the window means a wrong
+        // hint changes nothing at all -- the quarter-of-the-way-in offset is
+        // taken from whatever the file actually turns out to be.
         const seekToTarget = () => {
+            const real = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null;
+            const safeTarget =
+                nextMode === "full"
+                    ? 0
+                    : real === null
+                      ? target
+                      : Math.min(real * 0.25, Math.max(0, real - clipSeconds));
             try {
-                audio.currentTime = target;
+                audio.currentTime = safeTarget;
             } catch {
                 // Safari can still refuse a seek it deems out of range. Playing
                 // from wherever the element sits beats not playing at all.
@@ -112,6 +139,11 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
                 audio.removeEventListener("loadedmetadata", onReady);
                 audio.removeEventListener("error", onReady);
                 setLoading(false);
+                // Record the measured length so every later render computes the
+                // clip window from the real file rather than the hint.
+                if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                    setActualDuration(audio.duration);
+                }
                 // The user may have started the other song while this was
                 // loading. If this player no longer holds the shared slot, its
                 // seek is stale and must not drag playback back.

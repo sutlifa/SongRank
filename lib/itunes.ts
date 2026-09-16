@@ -71,7 +71,23 @@ function toSearchResult(t: ITunesTrack): SearchResult | null {
         album: t.collectionName ?? null,
         artworkUrl: upgradeArtwork(t.artworkUrl100),
         previewUrl: t.previewUrl ?? null,
-        previewSeconds: typeof t.trackTimeMillis === "number" ? Math.round(t.trackTimeMillis / 1000) : null,
+        // Deliberately null, and never `trackTimeMillis / 1000`.
+        //
+        // `trackTimeMillis` is the length of the WHOLE TRACK, not of the
+        // preview file. Using it here reported a 3.5-minute song as a
+        // 210-second "preview", and ClipPlayer starts its clip a quarter of
+        // the way in -- so it seeked to 52 seconds inside a file that is only
+        // 30 seconds long. The browser answers a seek past the end by firing
+        // `ended`, which showed as a full progress bar and no audio, and the
+        // failure scaled with song length so it looked erratic rather than
+        // systematic. Fixtures hardcode a correct 30, so no offline test could
+        // ever catch it.
+        //
+        // The search API does not report preview length at all, so the honest
+        // value is "unknown": ClipPlayer reads the real duration off the audio
+        // element once metadata loads, which is authoritative in a way nothing
+        // in this response is.
+        previewSeconds: null,
         itunesId: typeof t.trackId === "number" ? t.trackId : null,
     };
 }
