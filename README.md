@@ -18,6 +18,8 @@ round schedule would need.
 - **Tolerant pasting** — handles `Artist - Title`, `Title - Artist`, `Title by Artist`,
   `Title, Artist`, numbered and bulleted lists, quotes and duplicates. Ambiguous rows get
   an editable review step instead of a silent guess.
+- **No content filtering** — `explicit=Yes` is stated on every catalogue request. SongRank
+  ranks whatever songs you chose; it does not decide which of them you are allowed to rank.
 - **Preview clips** — the full 30-second iTunes preview for each track, with a progress
   bar and an elapsed/total readout. Loudness is evened out across songs so an old quiet
   master doesn't lose to a modern loud one. Tracks with no preview stay fully votable.

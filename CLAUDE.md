@@ -133,6 +133,15 @@ to find.
 7. `react-hooks` v7 flags refs read during render and sync `setState` in effects as
    hard errors. The codebase defers those by one tick; follow the existing pattern.
 
+## Catalogue lookups
+
+`explicit=Yes` is stated on every iTunes request — SongRank does NOT content-filter
+music, and must never start by accident. `RESOLVE_CANDIDATES` (20) is how many hits
+each cascade query scores; it was 5, which left a well-covered title's real
+recording buried under karaoke versions and looking like "iTunes doesn't have it".
+scripts/verify-resolve.ts asserts both, and its mock honours `limit` so the
+buried-track test actually bites.
+
 ## Deleting
 
 Soft delete via `tournaments.deleted_at`. EVERY read path filters `deleted_at IS

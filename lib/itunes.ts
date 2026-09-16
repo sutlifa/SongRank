@@ -107,7 +107,17 @@ async function rawSearch(term: string, limit: number): Promise<SearchResult[]> {
     // throw at this ("4*TOWN", "Auli'i Cravalho", "Keali'i Ho'omalu"). That's
     // fine: none of them are meaningful URL delimiters, so passing them
     // through verbatim is correct, not a bug to work around.
-    const url = `${ITUNES_SEARCH_URL}?term=${encodeURIComponent(q)}&media=music&entity=song&limit=${limit}`;
+    // `explicit=Yes` is stated rather than left to the default, which is what
+    // Apple documents today. SongRank does not filter music by content and
+    // should not start doing so by accident: this is a tool for ranking
+    // whatever songs someone chose, and quietly dropping half an artist's
+    // catalogue would be both wrong and invisible -- the track simply would
+    // not turn up, with nothing to say why. Writing the parameter down means a
+    // change to Apple's default cannot silently impose a policy we never
+    // decided on.
+    const url =
+        `${ITUNES_SEARCH_URL}?term=${encodeURIComponent(q)}` +
+        `&media=music&entity=song&explicit=Yes&limit=${limit}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) return [];
     const data = (await res.json()) as { results?: ITunesTrack[] };
@@ -234,6 +244,22 @@ export function buildResolveQueries(title: string, artist: string): string[] {
     return Array.from(new Set(queries.map((q) => q.trim()).filter(Boolean)));
 }
 
+/**
+ * How many hits each query in the cascade pulls back to score.
+ *
+ * This was 5, which is too few for a title other people have also recorded.
+ * iTunes ranks by its own relevance, and for a well-covered song the first
+ * few hits are routinely karaoke versions, tribute albums and unrelated
+ * tracks that happen to share a word -- so the recording actually being
+ * looked for can sit outside the top 5 and never get scored at all. The
+ * symptom is a song that "isn't on iTunes" when it plainly is.
+ *
+ * Widening the pool cannot make a match worse: `scoreCandidate` picks the
+ * best of whatever comes back, and the loop still stops at the first "high".
+ * It costs a slightly larger response on the same number of requests.
+ */
+const RESOLVE_CANDIDATES = 20;
+
 const STOPWORDS = new Set(["the", "a", "an", "and", "of", "&"]);
 function tokens(s: string): string[] {
     const normalized = normalizeForMatch(s);
@@ -329,7 +355,7 @@ export async function resolveSong(title: string, artist: string): Promise<Resolv
     for (const q of queries) {
         let candidates: SearchResult[];
         try {
-            candidates = await rawSearch(q, 5);
+            candidates = await rawSearch(q, RESOLVE_CANDIDATES);
         } catch {
             candidates = [];
         }

@@ -188,9 +188,16 @@ function installMockFetch(catalogue: Record<string, MockCatalogueEntry[]>, calls
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
-        const term = decodeURIComponent(new URL(url).searchParams.get("term") ?? "");
+        const params = new URL(url).searchParams;
+        const term = decodeURIComponent(params.get("term") ?? "");
         calls.push(term);
-        const results = catalogue[term] ?? [];
+        // The mock honours `limit`, because the real API does. Without this a
+        // test could "prove" that a track buried 13 hits deep is found while
+        // the code only ever asked for the top 5 -- the mock would hand back
+        // the whole array regardless and the assertion would pass for the
+        // wrong reason.
+        const limit = Number(params.get("limit")) || 50;
+        const results = (catalogue[term] ?? []).slice(0, limit);
         return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
     }) as typeof fetch;
     return () => {
@@ -314,6 +321,90 @@ async function runAsyncChecks() {
         try {
             const suggestions = await suggestMatches("Absolutely Nothing Like This Exists", "Nobody");
             check("suggestMatches: no hits anywhere in the cascade -> empty array, not null/throw", Array.isArray(suggestions) && suggestions.length === 0);
+        } finally {
+            restore();
+        }
+    }
+
+    // -- SongRank does not content-filter music, and must not start by
+    // accident. These two check the request itself rather than the results:
+    // the parameter is stated, and nothing in the pipeline drops a track for
+    // what it is. An explicit track quietly vanishing would look exactly like
+    // "iTunes doesn't have it", which is the worst kind of bug to ship --
+    // invisible, and indistinguishable from an upstream gap.
+    {
+        const urls: string[] = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            urls.push(typeof input === "string" ? input : input.toString());
+            return new Response(JSON.stringify({ results: [] }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+        try {
+            await resolveSong("Chicken Huntin' (Slaughter Mix)", "Insane Clown Posse");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+        check(
+            "search asks Apple to INCLUDE explicit tracks",
+            urls.length > 0 && urls.every((u) => new URL(u).searchParams.get("explicit") === "Yes")
+        );
+        check(
+            "nothing in the request filters by content beyond term/media/entity",
+            urls.every((u) => {
+                const keys = [...new URL(u).searchParams.keys()].sort().join(",");
+                return keys === "entity,explicit,limit,media,term";
+            })
+        );
+        // Widened from 5: for a title other people have also recorded, the
+        // real track routinely sits outside the first few relevance hits.
+        check(
+            "each query pulls back a wide enough candidate pool to find a buried track",
+            urls.every((u) => Number(new URL(u).searchParams.get("limit")) >= 20)
+        );
+    }
+
+    // -- The same track, end to end through the cascade, with a catalogue
+    // that buries it under the covers and karaoke versions iTunes really does
+    // rank first for a well-covered title. At the old limit of 5 this song
+    // was unreachable no matter how good the scoring was.
+    {
+        const noise = (n: number) =>
+            Array.from({ length: n }, (_, i) => ({
+                trackName: `Chicken Huntin (Karaoke Version ${i + 1})`,
+                artistName: "Party Tyme Karaoke",
+                previewUrl: "https://example.test/karaoke.m4a",
+            }));
+        const calls: string[] = [];
+        const restore = installMockFetch(
+            {
+                // The narrowest query finds nothing, as it often does for a
+                // remix suffix; the stripped-title query is the one that hits.
+                "Chicken Huntin (Slaughter Mix) Insane Clown Posse": [],
+                "Chicken Huntin Insane Clown Posse": [
+                    ...noise(12),
+                    {
+                        trackName: "Chicken Huntin' (Slaughter Mix)",
+                        artistName: "Insane Clown Posse",
+                        previewUrl: "https://example.test/icp.m4a",
+                    },
+                ],
+            },
+            calls
+        );
+        try {
+            const resolved = await resolveSong("Chicken Huntin (Slaughter Mix)", "Insane Clown Posse");
+            check(
+                "an explicit track buried under 12 karaoke hits still resolves",
+                resolved?.match?.artist === "Insane Clown Posse" &&
+                    resolved.match.title === "Chicken Huntin' (Slaughter Mix)"
+            );
+            check(
+                "...and at high confidence, so it is not flagged for review",
+                resolved?.confidence === "high"
+            );
         } finally {
             restore();
         }
