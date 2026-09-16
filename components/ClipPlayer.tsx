@@ -66,6 +66,8 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // from it, and re-rendering the player mid-clip to record a number the
     // user cannot see would be wasted work.
     const gainRef = useRef(1);
+    /** Whether the current preview has already had its loudness measured. */
+    const measuredRef = useRef(false);
 
     // 30s is the iTunes preview format's fixed length, so it is the right
     // assumption until the file itself says otherwise -- not an arbitrary
@@ -95,6 +97,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         setLoading(false);
         setMode("clip");
         gainRef.current = 1;
+        measuredRef.current = false;
         if (audio) {
             audio.volume = 1;
             audio.pause();
@@ -102,24 +105,6 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
             // load() with an empty src makes some browsers log a spurious error.
             if (previewUrl) audio.load();
         }
-        if (!previewUrl) return;
-
-        // Loudness measurement runs in the background and is never awaited by
-        // anything that starts playback. It is a separate fetch from the
-        // element's own (see lib/loudness.ts for why the element must not be
-        // routed through Web Audio), so a blocked or slow measurement costs
-        // nothing but the normalisation itself.
-        let cancelled = false;
-        gainForPreview(previewUrl).then((gain) => {
-            if (cancelled) return;
-            gainRef.current = gain;
-            // Apply immediately if this song is already playing -- the clip is
-            // 15 seconds, so waiting for the next play would often mean never.
-            if (audioRef.current) audioRef.current.volume = gain;
-        });
-        return () => {
-            cancelled = true;
-        };
     }, [previewUrl]);
 
     useImperativeHandle(ref, () => ({
@@ -147,6 +132,27 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
         // Re-applied on every play: the element's volume is reset to 1 when the
         // source changes, and the measurement may have landed since.
         audio.volume = gainRef.current;
+
+        // Loudness is measured on first PLAY, never on mount, and that timing
+        // is the whole point. Measuring on mount meant the pre-flight screen --
+        // which renders a player per row, up to 20 a page -- fired twenty
+        // simultaneous full-file downloads at Apple's CDN the moment it opened.
+        // A burst like that gets throttled, and the throttling took the real
+        // media requests down with it, so songs simply would not play. Tying it
+        // to playback bounds it to the one or two clips a person can actually
+        // be listening to. It is fire-and-forget: nothing here is awaited, so a
+        // slow or blocked measurement never delays the audio.
+        if (previewUrl && !measuredRef.current) {
+            measuredRef.current = true;
+            gainForPreview(previewUrl).then((gain) => {
+                gainRef.current = gain;
+                // The clip is 15 seconds, so waiting for the *next* play to
+                // apply this would often mean never applying it at all.
+                if (audioRef.current && audioRef.current.src.includes(previewUrl.slice(-24))) {
+                    audioRef.current.volume = gain;
+                }
+            });
+        }
 
         setMode(nextMode);
         // A previous run that reached the end left progress at 1. Clear it now

@@ -28,18 +28,24 @@
 
 /**
  * Target level, in RMS amplitude (not dB), that every measured song is pulled
- * down to. 0.08 is roughly -22 dBFS: below the RMS of nearly every commercial
- * master, which is the point -- a target that only a few tracks exceeded would
- * leave the rest untouched and normalise nothing.
+ * down to.
+ *
+ * This started at 0.08 and was too aggressive: typical commercial masters sit
+ * around 0.15-0.25 RMS, so nearly every song was cut to the floor and the whole
+ * app simply got quiet. 0.14 sits inside that normal band instead, so an
+ * ordinary master is barely touched and only genuinely hot ones come down.
+ * Evening out the loudest outliers is worth having; making everything quiet to
+ * chase a perfectly flat result is not.
  */
-const TARGET_RMS = 0.08;
+const TARGET_RMS = 0.14;
 
 /**
  * Never attenuate past this. A pathologically loud master could otherwise be
  * driven down to a whisper by a strict ratio, which trades one imbalance for
- * another. 0.25 bounds the correction to about -12 dB.
+ * another. 0.5 bounds the correction to about -6 dB -- audible, but nowhere
+ * near enough to make a song sound broken or unplayed.
  */
-const MIN_GAIN = 0.25;
+const MIN_GAIN = 0.5;
 
 /** Measurements are keyed by preview URL and shared across every player. */
 const cache = new Map<string, number>();
