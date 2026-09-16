@@ -25,7 +25,14 @@
 // Not a test framework: exits non-zero on the first failed assertion and
 // prints what broke, same shape as scripts/verify-parse.ts.
 
-import { primaryArtist, buildResolveQueries, scoreCandidate, resolveSong, suggestMatches } from "../lib/itunes.ts";
+import {
+    primaryArtist,
+    buildResolveQueries,
+    scoreCandidate,
+    resolveSong,
+    searchSongs,
+    suggestMatches,
+} from "../lib/itunes.ts";
 
 let failures = 0;
 let checks = 0;
@@ -483,6 +490,67 @@ async function runAsyncChecks() {
             const resolved = await resolveSong("Any Song", "Any Artist");
             check("a 400 is not retried -- retrying an unanswerable query wastes the quota", attempts <= 4, `${attempts} attempt(s)`);
             check("a 400 is a clean miss, not an outage", resolved.unreachable === false && resolved.match === null);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- The search box used to send exactly what was typed and stop, so a
+    // title Apple spells differently dead-ended on "No results" -- on the one
+    // screen where someone could have picked the right version themselves.
+    // Modelled on the real thing: Apple has no "Chicken Huntin (Slaughter
+    // Mix)" at all, but the base title returns a page including ICP's own
+    // differently-spelled remix.
+    {
+        const calls: string[] = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const term = decodeURIComponent(
+                new URL(typeof input === "string" ? input : input.toString()).searchParams.get("term") ?? ""
+            );
+            calls.push(term);
+            const results =
+                term === "Chicken Huntin"
+                    ? [
+                          {
+                              trackName: 'Chickin "Pluckin" Huntin Remix',
+                              artistName: "Insane Clown Posse",
+                              previewUrl: "https://example.test/icp.m4a",
+                          },
+                      ]
+                    : [];
+            return new Response(JSON.stringify({ results }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+        try {
+            const exact = await searchSongs("Chicken Huntin (Slaughter Mix)");
+            check("search: a term Apple has nothing for is broadened rather than dead-ended", exact.results.length === 1);
+            check("search: ...and reports which term actually answered", exact.usedTerm === "Chicken Huntin");
+            check("search: the broadening is tried second, not instead", calls[0] === "Chicken Huntin (Slaughter Mix)");
+
+            calls.length = 0;
+            const direct = await searchSongs("Chicken Huntin");
+            check("search: a term that works is not broadened, and needs one request", calls.length === 1);
+            check("search: ...and reports the term as typed", direct.usedTerm === "Chicken Huntin");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- A genuinely unknown song must still come back empty, and must not
+    // claim an outage. Broadening must not turn "no such song" into noise.
+    {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () =>
+            new Response(JSON.stringify({ results: [] }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })) as typeof fetch;
+        try {
+            const outcome = await searchSongs("Absolutely Nothing Like This (Remix)");
+            check("search: a real miss stays a miss", outcome.results.length === 0 && outcome.unreachable === false);
         } finally {
             globalThis.fetch = originalFetch;
         }

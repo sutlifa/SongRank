@@ -16,6 +16,10 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
     /** Whether the last search failed to reach Apple at all, as opposed to
      * reaching it and finding nothing -- see SearchOutcome in lib/itunes.ts. */
     const [unreachable, setUnreachable] = useState(false);
+    /** The term Apple actually answered, when a broadened one was needed --
+     * see searchSongs in lib/itunes.ts. Shown so a broadened search can never
+     * pass itself off as an exact one. */
+    const [usedTerm, setUsedTerm] = useState("");
     const [loading, setLoading] = useState(false);
     const [added, setAdded] = useState<Set<string>>(new Set());
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,11 +45,13 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                 if (requestId === requestIdRef.current) {
                     setResults(data.results ?? []);
                     setUnreachable(data.unreachable === true);
+                    setUsedTerm(typeof data.usedTerm === "string" ? data.usedTerm : "");
                 }
             } catch {
                 if (requestId === requestIdRef.current) {
                     setResults([]);
                     setUnreachable(true);
+                    setUsedTerm("");
                 }
             } finally {
                 if (requestId === requestIdRef.current) setLoading(false);
@@ -59,6 +65,7 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
     const visibleResults = term.trim() ? results : [];
     const visibleLoading = term.trim() ? loading : false;
     const visibleUnreachable = term.trim() ? unreachable : false;
+    const broadened = term.trim() && usedTerm && usedTerm !== term.trim() ? usedTerm : null;
 
     function handleAdd(result: SearchResult) {
         const key = `${result.title}|${result.artist}`;
@@ -105,6 +112,14 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                 ) : (
                     <p className="text-sm text-fg-muted">No results for &quot;{term}&quot;.</p>
                 )
+            )}
+
+            {!visibleLoading && broadened && visibleResults.length > 0 && (
+                <p className="mb-2 text-sm text-fg-muted">
+                    Nothing matched &ldquo;{term.trim()}&rdquo; exactly — showing results for{" "}
+                    <span className="font-medium text-fg">&ldquo;{broadened}&rdquo;</span>. Apple
+                    often lists a remix or version under a name you wouldn&apos;t guess.
+                </p>
             )}
 
             <ul className="max-h-80 space-y-1 overflow-y-auto">

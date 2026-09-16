@@ -215,6 +215,12 @@ async function rawSearch(term: string, limit: number): Promise<SearchResult[]> {
 export interface SearchOutcome {
     results: SearchResult[];
     /**
+     * The term that actually produced these results, which is not always the
+     * one that was typed -- see `searchSongs`. The caller shows this when it
+     * differs, so a broadened search never passes itself off as an exact one.
+     */
+    usedTerm: string;
+    /**
      * True when Apple never answered -- a timeout, or a rate limit that
      * survived every retry. Same distinction as `ResolveOutcome.unreachable`
      * and for the same reason: an empty `results` array means "nothing
@@ -232,23 +238,52 @@ export interface SearchOutcome {
 }
 
 /**
+ * Terms to try for one search box query, narrowest first.
+ *
+ * Only one broadening step, and only the one that reliably helps: dropping a
+ * parenthetical. Apple indexes a track under the exact title a label
+ * submitted, so a remix or version suffix someone half-remembers ("Chicken
+ * Huntin (Slaughter Mix)") frequently matches nothing at all while the base
+ * title returns plenty -- including, often, the version they were after under
+ * a name they would not have guessed.
+ */
+function searchFallbacks(term: string): string[] {
+    const trimmed = term.trim();
+    const stripped = stripParenthetical(trimmed);
+    return Array.from(new Set([trimmed, stripped].filter(Boolean)));
+}
+
+/**
  * GET /api/songs/search's implementation: free-text search, up to `limit` hits.
  *
  * 25 rather than 15: for a title other people have also recorded, the first
  * page is routinely karaoke and tribute versions, and the recording someone is
  * actually looking for can sit below a shorter cut-off. Same reasoning as
  * RESOLVE_CANDIDATES, on the list a human scans rather than the one we score.
+ *
+ * Unlike the resolve cascade, this used to send exactly what was typed and
+ * stop. So the search box dead-ended on a title Apple spells differently,
+ * showing "No results" for a song whose base title returns a page of them --
+ * the one screen where a person could have picked the right version out
+ * themselves, if only they had been shown it.
  */
 export async function searchSongs(term: string, limit = 25): Promise<SearchOutcome> {
-    if (!term.trim()) return { results: [], unreachable: false };
-    if (fixturesEnabled()) return { results: fixtureSearch(term), unreachable: false };
-    try {
-        return { results: await rawSearch(term, limit), unreachable: false };
-    } catch (err) {
-        // Still never throws -- callers rely on that -- but it now says which
-        // kind of nothing this is.
-        return { results: [], unreachable: err instanceof UpstreamUnavailableError };
+    const typed = term.trim();
+    if (!typed) return { results: [], unreachable: false, usedTerm: typed };
+    if (fixturesEnabled()) return { results: fixtureSearch(typed), unreachable: false, usedTerm: typed };
+
+    let unreachable = false;
+    for (const q of searchFallbacks(typed)) {
+        try {
+            const results = await rawSearch(q, limit);
+            if (results.length > 0) return { results, unreachable: false, usedTerm: q };
+        } catch (err) {
+            // Remembered rather than swallowed, so an empty result at the end
+            // can still say whether Apple ever answered.
+            if (err instanceof UpstreamUnavailableError) unreachable = true;
+        }
     }
+    return { results: [], unreachable, usedTerm: typed };
 }
 
 // ---------------------------------------------------------------------------
