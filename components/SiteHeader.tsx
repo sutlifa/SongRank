@@ -6,6 +6,7 @@ import { useState } from "react";
 import AuthButton from "./AuthButton";
 
 const LINKS = [
+    { href: "/starters", label: "Ready-Made Lists" },
     { href: "/new", label: "Create New Ranking" },
     { href: "/history", label: "History" },
 ];

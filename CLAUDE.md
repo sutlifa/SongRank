@@ -133,6 +133,17 @@ to find.
 7. `react-hooks` v7 flags refs read during render and sync `setState` in effects as
    hard errors. The codebase defers those by one tick; follow the existing pattern.
 
+## Ready-made lists
+
+`lib/starterLists.ts` = fixed curated lists as `{title, artist}` pairs (pure, no I/O).
+`lib/charts.ts` = the one live list, off Apple's keyless chart feed, 6h revalidate,
+`null` on any failure so the card just isn't rendered. `loadStarter(id)` resolves
+either and lives in charts.ts so the dependency only points pure → network.
+
+Starters skip `lib/parse.ts` on purpose — the parser guesses which half of a line
+is the title, and here we wrote it down. They enter `/new` as drafts with
+`resolved: null`, so everything downstream is the ordinary flow.
+
 ## Ranking engine
 
 Swiss was replaced because it cannot produce a reliable full ranking: a correct

@@ -10,7 +10,11 @@ round schedule would need.
 
 ## Features
 
-- **Load songs two ways** — paste a list, or search for them one by one.
+- **Ready-made lists** — start in one click from a curated list (all-time greats, a genre,
+  a decade, the Beatles, Disney) or from what's charting on Apple Music right now. Every
+  one opens in the normal build screen, so it can be edited, renamed and added to before
+  anything starts. Browse them at `/starters`.
+- **Or load songs two ways** — paste a list, or search for them one by one.
 - **Tolerant pasting** — handles `Artist - Title`, `Title - Artist`, `Title by Artist`,
   `Title, Artist`, numbered and bulleted lists, quotes and duplicates. Ambiguous rows get
   an editable review step instead of a silent guess.
@@ -107,6 +111,18 @@ Sign-in stays hidden until both halves are present.
 
 Google redirect URI: `https://<your-domain>/api/auth/callback/google`.
 
+## Ready-made lists
+
+`lib/starterLists.ts` holds the fixed ones as `{ title, artist }` pairs — adding a list means
+adding an entry to that array and nothing else. They deliberately skip `lib/parse.ts`: the
+parser exists to *guess* which half of a pasted line is the title, and here we already know,
+so a starter arrives as structured drafts and joins the normal `/new` flow at preview
+resolution.
+
+`lib/charts.ts` is the one that isn't fixed — Apple's public, keyless chart feed, cached for
+six hours. Every failure path returns `null` and the card is simply not shown, so a feed
+outage costs a card rather than a page.
+
 ## Database
 
 The schema is one idempotent file — every statement is `IF NOT EXISTS` guarded, so it is
@@ -128,6 +144,7 @@ npm run typecheck
 npm run build
 node --experimental-strip-types scripts/verify-ranking.ts
 node --experimental-strip-types scripts/verify-swiss.ts
+node --experimental-strip-types scripts/verify-starters.ts
 ```
 
 `verify-ranking.ts` is the adaptive engine's proof: it plays rankings across a spread of
@@ -136,6 +153,12 @@ matchup counts track the budget formula, no pairing repeats before the pool is e
 lopsided field settles early, and — the check that actually proves the ranking works rather
 than merely runs — a seeded true order under low-noise voting produces a final ranking that
 correlates strongly with it.
+
+`verify-starters.ts` checks the hand-typed data in `lib/starterLists.ts`, where every way of
+being wrong is silent: a duplicate id hides a list behind another, a song repeated inside a
+list is silently de-duplicated on import so the card over-promises, and a stray empty string
+becomes a song nothing can match. It also prints each list's artist concentration, since a
+genre list that has drifted to a third one artist wastes its most informative early matchups.
 
 `verify-swiss.ts` is kept for the legacy engine, which still has to replay rankings saved
 before the adaptive engine existed: it plays rankings across n = 2..64 under several

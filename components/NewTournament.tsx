@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MAX_SONGS } from "@/lib/swiss";
 import { describeRankingPlan, estimateMatchups, ROUND_ROBIN_CEILING } from "@/lib/ranking";
 import { RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type Song, type Tournament } from "@/lib/types";
 import type { MatchConfidence } from "@/lib/parse";
+import type { StarterSong } from "@/lib/starterLists";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { setSessionTournament } from "@/lib/sessionCache";
 import SessionStatus from "./SessionStatus";
@@ -179,13 +180,26 @@ async function resolvePreviews(
 
 export default function NewTournament({
     authEnabled,
+    starter = null,
 }: {
     authEnabled: boolean;
+    /**
+     * A ready-made list the visitor arrived with, from /new?starter=<id> --
+     * see lib/starterLists.ts. Resolved on the server by app/new/page.tsx, so
+     * by the time it reaches here it is either a real list or null; this
+     * component never has to know that ids can be wrong or that one of the
+     * lists comes off the network.
+     */
+    starter?: { name: string; songs: StarterSong[] } | null;
 }) {
     const router = useRouter();
     const [tab, setTab] = useState<Tab>("paste");
     const [songs, setSongs] = useState<DraftSong[]>([]);
-    const [name, setName] = useState("");
+    // Seeded from the prop rather than set in an effect: the prop is identical
+    // on the server and on the client's first render, so this is the one case
+    // where a non-empty initial state cannot cause a hydration mismatch. The
+    // visitor can still rename it -- it is a starting point, not a lock.
+    const [name, setName] = useState(starter?.name ?? "");
     // Always the full preview. Apple's previews are 30 seconds and that is the
     // most audio we are ever given, so there is no upside to offering less --
     // the old 10/15/30 choice only let someone make their own comparisons
@@ -231,6 +245,38 @@ export default function NewTournament({
             }}
         />
     ) : null;
+
+    /**
+     * Drops a starter list's songs into the build screen, once.
+     *
+     * They arrive as ordinary drafts with `resolved: null`, which is exactly
+     * what the paste tab produces for a line it couldn't match -- so Continue
+     * resolves their previews and the pre-flight screen checks them like any
+     * other list. Nothing downstream can tell this list from a typed one.
+     *
+     * The ref is claimed in the effect body, and the work is done in the same
+     * body with nothing deferred, so React StrictMode's mount/cleanup/mount in
+     * development runs it exactly once: the first pass does the work and the
+     * second sees the flag. (The trap is claiming a flag for work a cleanup can
+     * still cancel -- see useTournamentLoader's own note on that.)
+     */
+    const starterLoadedRef = useRef(false);
+    useEffect(() => {
+        if (starterLoadedRef.current || !starter) return;
+        starterLoadedRef.current = true;
+        addSongs(
+            starter.songs.map((s) => ({
+                id: crypto.randomUUID(),
+                title: s.title,
+                artist: s.artist,
+                // Never flagged for review: unlike a pasted line, these were
+                // written as a title and an artist, so there is no guess here
+                // for a human to check.
+                ambiguous: false,
+                resolved: null,
+            }))
+        );
+    }, [starter]);
 
     function addSongs(incoming: DraftSong[]) {
         setSongs((prev) => {
@@ -421,6 +467,18 @@ export default function NewTournament({
             <p className="mb-6 text-sm text-fg-muted">
                 Add songs from any combination of the tabs below, then review and start.
             </p>
+
+            {starter && (
+                <div className="mb-6 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
+                    <p className="font-semibold text-accent">
+                        Loaded “{starter.name}” — {starter.songs.length} songs.
+                    </p>
+                    <p className="mt-1 text-fg-muted">
+                        It&apos;s yours now: add more below, remove anything you don&apos;t know, or
+                        rename it. Nothing starts until you hit Continue.
+                    </p>
+                </div>
+            )}
 
             {!authLoading && !signedIn && (
                 <div className="mb-6">

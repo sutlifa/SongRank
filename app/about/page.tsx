@@ -18,9 +18,12 @@ export default function AboutPage() {
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">How it works</h2>
                 <p className="mb-3 text-sm leading-relaxed text-fg-muted">
-                    Load songs by pasting a list or searching for them one at a time. Each song is
-                    matched against Apple&apos;s music catalogue to pull in artwork and a preview
-                    clip.
+                    Start from a ready-made list &mdash; all-time greats, a genre, a decade, or
+                    what&apos;s charting right now &mdash; or build your own by pasting a list or
+                    searching for songs one at a time. A ready-made list is just a starting point:
+                    it opens in the same build screen, where you can add to it, drop anything you
+                    don&apos;t know and rename it. Each song is matched against Apple&apos;s music
+                    catalogue to pull in artwork and a preview clip.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Then you vote. Two songs at a time, with a short clip of each so you can refresh
