@@ -59,6 +59,11 @@ export function useTournamentLoader(
 } {
     const [tournament, setTournament] = useState<Tournament | null>(null);
     const [resolved, setResolved] = useState(false);
+    /**
+     * Whether the one-time session-cache read below has actually HAPPENED --
+     * not whether it has been scheduled. The distinction is the whole point;
+     * see the effect for why.
+     */
     const checkedCacheRef = useRef(false);
     /** Set once, from `handleServerResolved`, before `resolved` flips true --
      * see this hook's header. Starts false so nothing writes to localStorage
@@ -67,13 +72,34 @@ export function useTournamentLoader(
 
     useEffect(() => {
         if (checkedCacheRef.current) return;
-        checkedCacheRef.current = true;
 
         // Deferred a tick past the effect's own body -- see
         // TournamentPlayer's matching comment on this same pattern. The
         // cache read itself is synchronous, but acting on it (setting state)
         // is kept one step removed from the effect body proper.
         const timer = setTimeout(() => {
+            // The guard is claimed HERE, inside the timer, and deliberately
+            // not next to the `if` above.
+            //
+            // React's StrictMode (on by default under `next dev`) mounts every
+            // component, runs its cleanups, and mounts it again, to surface
+            // exactly this class of bug. Setting the ref in the effect body
+            // made the two passes disagree about what had been done: pass one
+            // claimed the work and scheduled this timer, the cleanup below
+            // then cancelled it before it could ever fire, and pass two saw a
+            // ref saying "already read the cache" and returned without
+            // scheduling anything. With auth off, the `setResolved(true)` in
+            // here is the *only* thing that ever flips `resolved`, so /t/[id]
+            // and /t/[id]/results sat on "Loading your ranking..." forever --
+            // in dev only, since production mounts once and the first timer
+            // survives. A dev-only hang in the two screens the whole app
+            // exists to render.
+            //
+            // Claiming it from inside the timer ties the flag to the work
+            // rather than to the intent: a cancelled run never claims
+            // anything, so the next mount is free to schedule a real one.
+            checkedCacheRef.current = true;
+
             const cached = getSessionTournament(id);
             if (cached) setTournament(cached);
 
