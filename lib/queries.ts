@@ -131,6 +131,10 @@ export interface PublicTournamentSummary {
     updated_at: string;
     owner_id: number;
     owner_name: string | null;
+    /** Their handle, or null if they haven't set one -- see lib/username.ts.
+     * Carried so a card can link to /u/<handle> and name who made it without a
+     * second query per row. */
+    owner_username: string | null;
     owner_image: string | null;
 }
 
@@ -176,18 +180,21 @@ export async function getVisibility(userId: number, id: string): Promise<Visibil
 export async function getPublicTournament(id: string): Promise<(TournamentRow & {
     owner_id: number;
     owner_name: string | null;
+    owner_username: string | null;
     owner_image: string | null;
     source_tournament_id: string | null;
 }) | null> {
     const rows = await sql<(TournamentRow & {
         owner_id: number;
         owner_name: string | null;
+        owner_username: string | null;
         owner_image: string | null;
         source_tournament_id: string | null;
     })[]>`
         SELECT t.id, t.name, t.clip_seconds, t.format, t.depth, t.songs, t.votes,
                t.created_at, t.updated_at, t.source_tournament_id,
-               u.id AS owner_id, u.name AS owner_name, u.image AS owner_image
+               u.id AS owner_id, u.name AS owner_name, u.username AS owner_username,
+               u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
         WHERE t.id = ${id} AND t.visibility = 'public'
@@ -205,7 +212,8 @@ export async function listPublicTournamentsByUser(
                jsonb_array_length(t.songs) AS songs,
                jsonb_array_length(t.votes) AS votes,
                t.updated_at,
-               u.id AS owner_id, u.name AS owner_name, u.image AS owner_image
+               u.id AS owner_id, u.name AS owner_name, u.username AS owner_username,
+               u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
         WHERE t.user_id = ${ownerId} AND t.visibility = 'public'
@@ -229,7 +237,8 @@ export async function listPublicTournaments(limit = 60): Promise<PublicTournamen
                jsonb_array_length(t.songs) AS songs,
                jsonb_array_length(t.votes) AS votes,
                t.updated_at,
-               u.id AS owner_id, u.name AS owner_name, u.image AS owner_image
+               u.id AS owner_id, u.name AS owner_name, u.username AS owner_username,
+               u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
         WHERE t.visibility = 'public'

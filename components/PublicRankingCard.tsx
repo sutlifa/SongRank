@@ -16,7 +16,12 @@ export default function PublicRankingCard({
         >
             <h3 className="font-semibold text-fg">{ranking.name}</h3>
             {showOwner && (
-                <p className="text-sm text-fg-muted">by {ranking.owner_name ?? "Someone"}</p>
+                <p className="text-sm text-fg-muted">
+                    by {ranking.owner_name ?? "Someone"}
+                    {ranking.owner_username && (
+                        <span className="ml-1 font-mono text-xs">@{ranking.owner_username}</span>
+                    )}
+                </p>
             )}
             <p className="mt-auto pt-1 text-xs text-fg-muted">
                 {ranking.songs} songs · {ranking.votes} matchups played

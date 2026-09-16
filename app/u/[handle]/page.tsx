@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { hasDatabase } from "@/lib/db";
 import { isAuthConfigured } from "@/lib/authConfig";
-import { getPerson } from "@/lib/people";
+import { getPersonByHandle } from "@/lib/people";
 import { isFriend } from "@/lib/friends";
 import { listPublicTournamentsByUser } from "@/lib/queries";
 import FriendButton from "@/components/FriendButton";
@@ -12,28 +12,32 @@ import SharingUnavailable from "@/components/SharingUnavailable";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProfilePage({ params }: { params: Promise<{ id: string }> }) {
+/**
+ * Someone's profile.
+ *
+ * The route parameter is a *handle*: a username, or a numeric user id. Both
+ * resolve, because profile links shared before usernames existed point at ids
+ * and breaking them would be a self-inflicted wound. They can never be
+ * confused -- lib/username.ts refuses an all-digit username precisely so this
+ * stays unambiguous no matter who signs up later.
+ */
+export default async function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
     if (!hasDatabase || !isAuthConfigured()) return <SharingUnavailable what="Profiles" />;
 
-    const { id } = await params;
-    const personId = Number(id);
-    // A non-numeric id can't be a user (ids are SERIAL), so this is a 404
-    // rather than a query -- and it keeps a garbage path out of the database.
-    if (!Number.isInteger(personId) || personId <= 0) notFound();
-
-    const person = await getPerson(personId);
+    const { handle } = await params;
+    const person = await getPersonByHandle(decodeURIComponent(handle));
     if (!person) notFound();
 
     const session = await auth();
     const viewerId = session?.user?.id ?? null;
-    const isSelf = viewerId === personId;
+    const isSelf = viewerId === person.id;
 
     const [rankings, following] = await Promise.all([
-        listPublicTournamentsByUser(personId),
-        viewerId && !isSelf ? isFriend(viewerId, personId) : Promise.resolve(false),
+        listPublicTournamentsByUser(person.id),
+        viewerId && !isSelf ? isFriend(viewerId, person.id) : Promise.resolve(false),
     ]);
 
-    const name = person.name?.trim() || "Someone";
+    const name = person.name?.trim() || person.username || "Someone";
 
     return (
         <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
@@ -46,7 +50,9 @@ export default async function ProfilePage({ params }: { params: Promise<{ id: st
                 </span>
                 <div className="min-w-0 flex-1">
                     <h1 className="text-2xl font-bold">{name}</h1>
-                    <p className="text-sm text-fg-muted">{person.maskedEmail}</p>
+                    {person.username && (
+                        <p className="font-mono text-sm text-fg-muted">@{person.username}</p>
+                    )}
                     <p className="mt-1 text-sm text-fg-muted">
                         {person.publicRankings} public {person.publicRankings === 1 ? "ranking" : "rankings"}
                     </p>
@@ -55,7 +61,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ id: st
 
             {viewerId && !isSelf && (
                 <div className="mb-8">
-                    <FriendButton personId={personId} personName={name} initiallyFriend={following} />
+                    <FriendButton personId={person.id} personName={name} initiallyFriend={following} />
                 </div>
             )}
             {isSelf && (
@@ -63,7 +69,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ id: st
                     This is how your profile looks to everyone else. Only rankings you&apos;ve made
                     public appear here —{" "}
                     <Link href="/history" className="text-accent underline underline-offset-2">
-                        manage them in your history
+                        manage them, and your username, in your history
                     </Link>
                     .
                 </p>
@@ -71,7 +77,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ id: st
             {!viewerId && (
                 <p className="mb-8 text-sm text-fg-muted">
                     <Link
-                        href={`/signin?callbackUrl=${encodeURIComponent(`/u/${personId}`)}`}
+                        href={`/signin?callbackUrl=${encodeURIComponent(`/u/${person.username ?? person.id}`)}`}
                         className="text-accent underline underline-offset-2"
                     >
                         Sign in

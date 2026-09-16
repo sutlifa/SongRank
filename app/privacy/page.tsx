@@ -46,7 +46,10 @@ export default function PrivacyPage() {
                         Your Google account&apos;s <strong className="text-fg">name</strong>,{" "}
                         <strong className="text-fg">email address</strong>,{" "}
                         <strong className="text-fg">avatar image URL</strong> and{" "}
-                        <strong className="text-fg">Google account ID</strong>.
+                        <strong className="text-fg">Google account ID</strong>, plus the{" "}
+                        <strong className="text-fg">username</strong> you choose, if you choose one.
+                        The email address is used to recognise your account, never to contact you and
+                        never to show to anyone else.
                     </li>
                     <li>
                         For each ranking you save: its name, the{" "}
@@ -87,13 +90,14 @@ export default function PrivacyPage() {
                     <Link href="/people" className="text-accent hover:underline">
                         people directory
                     </Link>{" "}
-                    once you have published at least one ranking, showing your name and a partly
-                    hidden form of your email address like{" "}
-                    <span className="font-mono">al•••@example.com</span>. People can find you by
-                    searching your name, or by typing your email address in full if they already know
-                    it. <strong className="text-fg">Your full email address is never shown to anyone
-                    and never leaves our server</strong>, and a partial address deliberately matches
-                    nothing, so the directory cannot be used to discover addresses.
+                    once you have published at least one ranking, showing your display name and your
+                    username if you have chosen one. People find you by searching either.{" "}
+                    <strong className="text-fg">Your email address is never shown to anyone, in any
+                    form, and never leaves our server.</strong>{" "}
+                    Someone who already knows your address in full can use it to find you — that is
+                    there so a friend who has your email can find you before you have picked a
+                    username — but a partial address deliberately matches nothing, so the directory
+                    cannot be used to discover addresses that aren&apos;t already known.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     Following someone is one-way and private to you: it only decides whose public

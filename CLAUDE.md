@@ -141,8 +141,13 @@ control is IN the SQL (`getPublicTournament` takes no userId and filters on
 server-rendered route for other people's rankings; do NOT turn `/t/[id]` into a
 read-only mode instead — that route autosaves every vote.
 
-`lib/people.ts` never returns a full email. Name search = substring; email search
-= exact whole address only (prevents harvesting). Masked form on every result.
+`lib/people.ts` returns NO email field at all. Username/name search = substring;
+email search = exact whole address only (prevents harvesting). Usernames are
+nullable, never backfilled, unique on `lower(username)` (constraint violation,
+not a SELECT-first check). `lib/username.ts` = pure rules + `profilePath`;
+`profilePath` lives there, not in people.ts, because client components import it
+and people.ts pulls in `postgres`. All-digit handles are banned so `/u/<handle>`
+stays unambiguous with the numeric-id form that old links use.
 
 Friends are one-way and gate nothing; they only order `/browse`.
 

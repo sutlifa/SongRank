@@ -29,6 +29,41 @@ export async function upsertUser(user: {
 }
 
 /**
+ * Sets (or changes) a user's handle.
+ *
+ * Validation happens in lib/username.ts before this is called; what can only
+ * be decided here is whether someone else already has it. That is answered by
+ * the unique index rather than by a SELECT-then-INSERT, which would be a race:
+ * two people submitting the same handle at the same moment would both find it
+ * free and both write it. Catching the constraint violation is the only answer
+ * that stays correct under concurrency.
+ *
+ * Returns "taken" rather than throwing, because that is not an error -- it is
+ * the normal outcome of picking a popular name, and the caller turns it
+ * straight into a sentence for the person to act on.
+ */
+export async function setUsername(userId: number, username: string): Promise<"ok" | "taken"> {
+    try {
+        await sql`UPDATE users SET username = ${username} WHERE id = ${userId}`;
+        return "ok";
+    } catch (err) {
+        // 23505 = unique_violation. Any other failure is a real fault and is
+        // re-thrown for the route to log and turn into a 500 -- swallowing it
+        // here would report "that name is taken" for a database outage.
+        if ((err as { code?: string }).code === "23505") return "taken";
+        throw err;
+    }
+}
+
+/** A user's current handle, or null if they have never set one. */
+export async function getUsername(userId: number): Promise<string | null> {
+    const rows = await sql<{ username: string | null }[]>`
+        SELECT username FROM users WHERE id = ${userId}
+    `;
+    return rows[0]?.username ?? null;
+}
+
+/**
  * Deletes a user and everything belonging to them.
  *
  * Their saved rankings go with them automatically: `tournaments.user_id` is

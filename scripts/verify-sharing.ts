@@ -29,6 +29,7 @@ import * as f from "../lib/friends.ts";
 import * as people from "../lib/people.ts";
 import * as users from "../lib/users.ts";
 import { compareRankings, type CompareEntry } from "../lib/compare.ts";
+import { profilePath } from "../lib/username.ts";
 import { deriveTournament, recordVote } from "../lib/tournamentEngine.ts";
 import { getCuratedStarter } from "../lib/starterLists.ts";
 import type { Song, Tournament } from "../lib/types.ts";
@@ -77,6 +78,11 @@ async function makeUser(email: string, name: string): Promise<number> {
 const alice = await makeUser("alice@example.com", "Alice Adams");
 const bob = await makeUser("bob@example.com", "Bob Brown");
 const carol = await makeUser("carol@example.com", "Carol Clark");
+
+check((await users.setUsername(alice, "alice")) === "ok", "Alice can claim a handle");
+check((await users.setUsername(bob, "bobby")) === "ok", "Bob can claim a different handle");
+// Carol is left without one on purpose: "has no username" is an ordinary
+// state that every read path has to keep working for, not an edge case.
 
 const songs: Song[] = getCuratedStarter("beatles")!.songs.slice(0, 8).map((s, i) => ({
     id: `song-${i}`,
@@ -218,20 +224,47 @@ console.log("  one-way, idempotent, no self-follow, no phantom users");
 
 // --- the people directory --------------------------------------------------
 console.log("\nPeople directory:");
-check(people.maskEmail("alice@example.com") === "al•••@example.com", `maskEmail gave ${people.maskEmail("alice@example.com")}`);
-check(!people.maskEmail("alice@example.com").includes("alice"), "the local part must not survive masking");
-check(people.maskEmail("a@b.com").startsWith("a•"), `a one-character local part gave ${people.maskEmail("a@b.com")}`);
-check(people.maskEmail("broken") === "•••", "an address with no @ is masked entirely rather than throwing");
-
 const byName = await people.searchPeople("ali", bob);
 check(byName.length === 1 && byName[0].id === alice, "a name substring finds Alice");
-check(!Object.keys(byName[0]).includes("email"), "a search result must not carry a raw email field at all");
+check(byName[0].username === "alice", "a result carries the handle");
+check(
+    !Object.keys(byName[0]).some((k) => k.toLowerCase().includes("email")),
+    `a search result must carry no email field of any kind -- got keys: ${Object.keys(byName[0]).join(", ")}`
+);
+check(
+    !JSON.stringify(byName).includes("@example.com"),
+    "no email address may appear anywhere in a search result, masked or otherwise"
+);
 check(byName[0].publicRankings === 1, `Alice has one public ranking, got ${byName[0].publicRankings}`);
-check((await people.searchPeople("alice@example.com", bob)).length === 1, "a whole email address finds Alice");
+
+const byHandle = await people.searchPeople("alice", bob);
+check(byHandle.length === 1 && byHandle[0].id === alice, "a username substring finds Alice");
+check((await people.searchPeople("bobby", alice)).length === 1, "a handle that is not a name substring still matches");
+
+check((await people.searchPeople("alice@example.com", bob)).length === 1, "a whole email address still finds someone");
 check((await people.searchPeople("alice@", bob)).length === 0, "a PARTIAL address must not match -- no harvesting");
 check((await people.searchPeople("@example.com", bob)).length === 0, "a bare domain must not enumerate users");
 check((await people.searchPeople("a", bob)).length === 0, "a one-character query returns nothing");
 check((await people.searchPeople("Bob", bob)).length === 0, "you are excluded from your own search results");
+
+// Handles: uniqueness, case-insensitivity, and the /u/<handle> lookup.
+check((await users.setUsername(bob, "ALICE")) === "taken", "a handle must be taken case-insensitively");
+check((await users.getUsername(bob)) === "bobby", "...and the failed claim must not have changed Bob's handle");
+check((await users.setUsername(bob, "bobby2")) === "ok", "Bob can change his own handle");
+check((await users.setUsername(bob, "bobby")) === "ok", "...and change it back, now that the old one is free");
+
+check((await people.getPersonByHandle("alice"))?.id === alice, "a profile resolves by handle");
+check((await people.getPersonByHandle("ALICE"))?.id === alice, "handle lookup is case-insensitive");
+check((await people.getPersonByHandle(String(alice)))?.id === alice, "a numeric id still resolves, so old links keep working");
+check((await people.getPersonByHandle("nobody")) === null, "an unknown handle resolves to nothing");
+check((await people.getPersonByHandle("")) === null, "an empty handle resolves to nothing");
+check((await people.getPersonByHandle("0")) === null, "a zero id resolves to nothing");
+check((await people.getPerson(carol))?.username === null, "someone without a handle is an ordinary, readable state");
+check(
+    profilePath({ id: 7, username: "sam" }) === "/u/sam" &&
+        profilePath({ id: 7, username: null }) === "/u/7",
+    "profilePath prefers the handle and falls back to the id"
+);
 
 const active = await people.listActivePeople(bob);
 check(
@@ -240,7 +273,7 @@ check(
 );
 check((await people.getPerson(carol))!.publicRankings === 0, "Carol exists with nothing public");
 check((await q.listPublicTournamentsByUser(alice)).length === 1, "a profile lists public rankings only");
-console.log("  names searchable, addresses masked, partial-email search deliberately useless");
+console.log("  found by handle or name; no email in any payload; handles unique case-insensitively");
 
 // --- deletion still cascades through the new tables ------------------------
 console.log("\nAccount deletion:");

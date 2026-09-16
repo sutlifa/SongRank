@@ -122,3 +122,28 @@ CREATE INDEX IF NOT EXISTS friends_user_idx ON friends (user_id);
 -- btree index for a prefix match on a lowercased column, which is exactly the
 -- search lib/people.ts performs.
 CREATE INDEX IF NOT EXISTS users_name_lower_idx ON users (lower(name));
+
+-- ---------------------------------------------------------------------------
+-- Usernames
+-- ---------------------------------------------------------------------------
+
+-- The handle people are found and addressed by, so nobody has to hand out an
+-- email address to be findable. See lib/username.ts for the rules.
+--
+-- Nullable, and deliberately not backfilled: every account that existed before
+-- this column did was created without ever being asked, and a handle invented
+-- for someone by a string transform is both a small indignity and usually
+-- worse than what they would pick themselves. So an account simply has no
+-- username until its owner sets one, and every read path treats that as an
+-- ordinary state rather than an error.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+
+-- Uniqueness is case-insensitive: "@Sam" and "@sam" must never be two people,
+-- because the difference is invisible when spoken and nearly invisible when
+-- read. lib/username.ts lowercases on the way in, so this index is both the
+-- constraint and the lookup path for a profile at /u/<handle>.
+--
+-- A unique INDEX rather than a UNIQUE CONSTRAINT because a constraint cannot
+-- be declared over an expression. Postgres treats NULLs as distinct, so any
+-- number of accounts can go on having no username at all.
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username));

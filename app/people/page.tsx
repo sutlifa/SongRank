@@ -4,6 +4,7 @@ import { hasDatabase } from "@/lib/db";
 import { isAuthConfigured } from "@/lib/authConfig";
 import { listActivePeople } from "@/lib/people";
 import { listFriends } from "@/lib/friends";
+import { getUsername } from "@/lib/users";
 import PeopleSearch from "@/components/PeopleSearch";
 import PersonRow from "@/components/PersonRow";
 import SharingUnavailable from "@/components/SharingUnavailable";
@@ -21,9 +22,10 @@ export default async function PeoplePage() {
     const session = await auth();
     const viewerId = session?.user?.id ?? null;
 
-    const [friends, active] = await Promise.all([
+    const [friends, active, myUsername] = await Promise.all([
         viewerId ? listFriends(viewerId) : Promise.resolve([]),
         listActivePeople(viewerId),
+        viewerId ? getUsername(viewerId) : Promise.resolve(null),
     ]);
     const friendSet = new Set(friends.map((f) => f.id));
 
@@ -31,10 +33,22 @@ export default async function PeoplePage() {
         <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
             <h1 className="mb-2 text-2xl font-bold sm:text-3xl">People</h1>
             <p className="mb-8 max-w-2xl text-sm leading-relaxed text-fg-muted">
-                Find someone by name, or by their full email address if you already know it. You&apos;ll
-                see their public rankings and nothing else — email addresses are never shown in full,
-                and nothing private ever appears here.
+                Find someone by username or name. You&apos;ll see their public rankings and nothing
+                else — email addresses are never shown here at all, and nothing private ever appears.
             </p>
+
+            {viewerId && !myUsername && (
+                <div className="mb-8 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
+                    <p className="font-semibold text-accent">You don&apos;t have a username yet.</p>
+                    <p className="mt-1 text-fg-muted">
+                        Without one, friends can only find you by your display name.{" "}
+                        <Link href="/history" className="text-accent underline underline-offset-2">
+                            Pick a username
+                        </Link>{" "}
+                        — it takes a second, and it means never having to hand out your email address.
+                    </p>
+                </div>
+            )}
 
             <div className="card mb-10 p-4 sm:p-5">
                 <PeopleSearch friendIds={[...friendSet]} />

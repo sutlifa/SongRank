@@ -46,7 +46,8 @@ export default function AboutPage() {
                     Once you have both ranked the same list, comparing the two shows how closely you
                     agree, which songs you disagree most sharply about, and every song side by side.
                     Following someone is one-way and simply puts their public rankings first on your
-                    Browse page.
+                    Browse page. Pick a username and friends can find you by it &mdash; neither of
+                    you ever has to hand out an email address.
                 </p>
             </section>
 

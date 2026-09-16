@@ -10,12 +10,12 @@
 // lib/queries.ts, for the same reason.
 
 import { sql } from "./db";
-import { maskEmail, type PersonSummary } from "./people";
+import type { PersonSummary } from "./people";
 
 interface FriendRow {
     id: number;
     name: string | null;
-    email: string;
+    username: string | null;
     image: string | null;
     public_rankings: string;
 }
@@ -23,19 +23,19 @@ interface FriendRow {
 /** Everyone `userId` has added, most recently active first. */
 export async function listFriends(userId: number): Promise<PersonSummary[]> {
     const rows = await sql<FriendRow[]>`
-        SELECT u.id, u.name, u.email, u.image,
+        SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
                  WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
         FROM friends f
         JOIN users u ON u.id = f.friend_id
         WHERE f.user_id = ${userId}
-        ORDER BY lower(u.name)
+        ORDER BY lower(coalesce(u.username, u.name))
     `;
     return rows.map((row) => ({
         id: row.id,
         name: row.name,
+        username: row.username,
         image: row.image,
-        maskedEmail: maskEmail(row.email),
         publicRankings: Number(row.public_rankings),
     }));
 }

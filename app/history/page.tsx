@@ -4,6 +4,9 @@ import { hasDatabase } from "@/lib/db";
 import { hasGoogleCredentials, isAuthConfigured } from "@/lib/authConfig";
 import HistoryList from "@/components/HistoryList";
 import DeleteAccountControl from "@/components/DeleteAccountControl";
+import UsernameControl from "@/components/UsernameControl";
+import { getUsername } from "@/lib/users";
+import { suggestUsername } from "@/lib/username";
 
 export const metadata = { title: "History" };
 
@@ -46,11 +49,24 @@ export default async function HistoryPage() {
         );
     }
 
-    // The delete control lives here because this is the only page that exists
-    // *because* you have an account -- putting it anywhere else would mean
-    // inventing a settings screen for a single button.
+    // The username and delete controls live here because this is the only page
+    // that exists *because* you have an account -- putting them anywhere else
+    // would mean inventing a settings screen for two controls.
+    //
+    // The username sits ABOVE the history rather than beside the delete
+    // button: someone who hasn't picked one is invisible in the directory, and
+    // that is worth saying on the way in rather than at the bottom of a page
+    // next to the destructive action.
+    const username = await getUsername(session.user.id);
+
     return (
         <>
+            <div className="mx-auto max-w-2xl px-4 pt-6 sm:px-6 sm:pt-8">
+                <UsernameControl
+                    current={username}
+                    suggestion={suggestUsername(session.user.name ?? session.user.email)}
+                />
+            </div>
             <HistoryList />
             <div className="mx-auto max-w-3xl px-4 pb-10 sm:px-6">
                 <DeleteAccountControl />

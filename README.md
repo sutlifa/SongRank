@@ -41,8 +41,9 @@ round schedule would need.
   ranking of your own — their votes don't come with it, and nothing you do touches their
   ranking — then compare the two: rank correlation, biggest disagreements, and a full
   side-by-side table.
-- **People** — find someone by name, or by their full email address if you already know it.
-  Following is one-way and private: it only decides whose rankings come first on Browse.
+- **People** — pick a `@username` and friends can find you without either of you handing out
+  an email address. Search by username or display name. Following is one-way and private: it
+  only decides whose rankings come first on Browse.
 
 ## How the ranking works
 
@@ -143,10 +144,19 @@ parameter at all and filters on `visibility = 'public'` itself, so there is no v
 pointing the interactive player (which autosaves every vote) at a ranking you don't own
 would put a stranger's write one forgotten branch away.
 
-The people directory **never returns a full email address**. Names are searchable by
-substring; emails only by an exact whole-address match, so you can find someone you already
-know and cannot discover anyone you don't. Results carry a masked form
-(`al•••@example.com`) instead. See `lib/people.ts` for the reasoning.
+The people directory **returns no email address at all**, masked or otherwise — that is what
+usernames are for. Usernames and display names are searchable by substring; an email matches
+only as a complete address, which keeps "find the friend who hasn't picked a handle yet"
+working without letting the directory be walked for addresses.
+
+Usernames are nullable and never backfilled: an account created before they existed simply
+has none, and every read path treats that as ordinary. Uniqueness is case-insensitive, via a
+unique index on `lower(username)` — caught as a constraint violation rather than checked with
+a SELECT first, which would be a race. `lib/username.ts` holds the rules (including why an
+all-digit handle is refused: `/u/<handle>` still accepts a numeric id so links shared before
+usernames existed keep working, and the two must never be ambiguous). `profilePath` lives in
+that module rather than `lib/people.ts` because client components need it and `lib/people.ts`
+imports the database driver.
 
 Friendship is **one-way** and gates nothing — it only decides ordering on `/browse`. See the
 `friends` table comment in `lib/db/schema.sql` for why there is no request/accept handshake.
@@ -174,6 +184,7 @@ node --experimental-strip-types scripts/verify-ranking.ts
 node --experimental-strip-types scripts/verify-swiss.ts
 node --experimental-strip-types scripts/verify-starters.ts
 node --experimental-strip-types scripts/verify-compare.ts
+node --experimental-strip-types scripts/verify-username.ts
 
 # Needs a throwaway local Postgres; refuses to run against a remote host.
 DATABASE_URL=postgres://... \
@@ -198,6 +209,11 @@ copied list matches exactly even after a "Change version" swap rewrites a title)
 normalised text (so two independently built lists still line up) — plus that ranks are
 renumbered within the shared songs and that a single shared song reports no correlation
 rather than a flattering 1.0.
+
+`verify-username.ts` covers the handle rules, each of which exists to stop something specific
+and none of which fails loudly if lost: an all-digit handle makes `/u/<handle>` ambiguous with
+a user id, a reserved word lets someone be `@support`, and a case-sensitive comparison lets
+`@Sam` and `@sam` be two people.
 
 `verify-sharing.ts` is the one script that needs a real database, because what it checks *is*
 the SQL: a missing `WHERE` clause doesn't throw, doesn't fail a type check and doesn't look

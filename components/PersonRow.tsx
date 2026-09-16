@@ -4,6 +4,7 @@
    remotePatterns for every such host, and an optimisation round trip, to save
    nothing measurable on an image this size. */
 import Link from "next/link";
+import { profilePath } from "@/lib/username";
 import type { PersonSummary } from "@/lib/people";
 
 /** One person, in the directory and the friends list. Name and a masked
@@ -12,7 +13,7 @@ import type { PersonSummary } from "@/lib/people";
 export default function PersonRow({ person, badge }: { person: PersonSummary; badge?: string }) {
     return (
         <Link
-            href={`/u/${person.id}`}
+            href={profilePath(person)}
             className="card flex items-center gap-3 p-3 transition-colors hover:border-accent/50 hover:bg-bg-soft-2"
         >
             {person.image ? (
@@ -30,7 +31,16 @@ export default function PersonRow({ person, badge }: { person: PersonSummary; ba
                     {person.name ?? "Someone"}
                     {badge && <span className="ml-2 text-xs font-normal text-accent">{badge}</span>}
                 </span>
-                <span className="block truncate text-xs text-fg-muted">{person.maskedEmail}</span>
+                <span className="block truncate text-xs text-fg-muted">
+                    {person.username ? (
+                        `@${person.username}`
+                    ) : (
+                        // No handle yet. Saying so beats an empty line, and it
+                        // is also the nudge that gets people to pick one --
+                        // which is what makes anybody findable at all.
+                        <span className="italic">no username yet</span>
+                    )}
+                </span>
             </span>
             <span className="shrink-0 text-xs text-fg-muted">
                 {person.publicRankings} public

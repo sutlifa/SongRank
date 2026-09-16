@@ -63,9 +63,15 @@ export default async function PublicRankingPage({ params }: { params: Promise<{ 
                 <h1 className="text-xl font-bold sm:text-2xl">{row.name}</h1>
                 <p className="mt-1 text-sm text-fg-muted">
                     by{" "}
-                    <Link href={`/u/${row.owner_id}`} className="text-accent underline underline-offset-2">
+                    <Link
+                        href={`/u/${row.owner_username ?? row.owner_id}`}
+                        className="text-accent underline underline-offset-2"
+                    >
                         {owner}
-                    </Link>{" "}
+                    </Link>
+                    {row.owner_username && (
+                        <span className="ml-1 font-mono text-xs">@{row.owner_username}</span>
+                    )}{" "}
                     · {row.songs.length} songs · {row.votes.length} matchups played
                     {derived.status !== "complete" && " · still in progress"}
                 </p>

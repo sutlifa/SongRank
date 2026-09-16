@@ -63,12 +63,12 @@ export default function PeopleSearch({ friendIds }: { friendIds: number[] }) {
         <div>
             <label className="block">
                 <span className="mb-1 block text-xs font-medium text-fg-muted">
-                    Search by name, or by someone&apos;s full email address
+                    Search by username or name
                 </span>
                 <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Sam, or sam@example.com"
+                    placeholder="sam, or Sam Smith"
                     className="input"
                     autoComplete="off"
                     type="search"
@@ -80,9 +80,9 @@ export default function PeopleSearch({ friendIds }: { friendIds: number[] }) {
                     {searching && <p className="text-sm text-fg-muted">Searching…</p>}
                     {results !== null && results.length === 0 && (
                         <p className="text-sm text-fg-muted">
-                            Nobody matched that. Email search needs the whole address — a partial one
-                            deliberately doesn&apos;t match, so the directory can&apos;t be used to
-                            discover addresses.
+                            Nobody matched that. You can also paste someone&apos;s full email address
+                            if you know it — a partial one deliberately doesn&apos;t match, so the
+                            directory can&apos;t be used to discover addresses.
                         </p>
                     )}
                     {results !== null && results.length > 0 && (

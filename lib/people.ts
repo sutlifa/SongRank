@@ -3,27 +3,27 @@
 // The people directory: finding someone so you can follow their public
 // rankings.
 //
-// ## What this deliberately does not do
+// ## Email addresses never leave the server
 //
-// The brief asked for a searchable directory showing each person's name and
-// email. Names, yes. Publishing email addresses is a different thing: a
-// directory that hands out every user's address to any visitor is a mailing
-// list for anyone who scrapes it, and nobody signing in with Google to rank
-// songs agreed to that. So:
+// People are found by **username** (see lib/username.ts) or by display name.
+// That is the whole point of having handles: an email address is a way to
+// contact someone, not a way to refer to them, and a directory that hands out
+// every user's address to any visitor is a mailing list for whoever scrapes
+// it. Nobody signing in with Google to rank songs agreed to that.
 //
-//   - **Names** are searchable by substring, the normal way you look someone
-//     up, and shown in full.
-//   - **Emails** are searchable only by an EXACT, whole-address match. That
-//     keeps the case the feature is actually for -- "my friend is
-//     sam@example.com, find them" -- while making the directory useless for
-//     harvesting: you cannot discover an address you do not already know, and
-//     a prefix like "sam@" matches nothing.
-//   - **Emails are never returned in full.** Every result carries a masked
-//     form instead (`sa••••@gmail.com`), which is enough to confirm you found
-//     the right Sam and not enough to write to them.
+//   - **Usernames** are searchable by substring and shown in full. They are
+//     chosen for this purpose, so there is nothing to protect.
+//   - **Display names** are searchable by substring too, because that is what
+//     you know about someone before you know their handle.
+//   - **Emails** are searchable only by an EXACT, whole-address match, and
+//     never returned in any form. That keeps the one case it is needed for --
+//     finding a friend who has not picked a handle yet -- while making the
+//     directory useless for harvesting: a prefix like "sam@" matches nothing,
+//     and a match tells you only that an address you already had belongs to a
+//     name you can already see.
 //
-// Nothing else about a person is exposed here, and rankings they have not
-// made public are not visible to anyone through any query in this file.
+// No query in this file returns an email address, masked or otherwise, and
+// rankings someone has not made public are invisible through all of them.
 
 import { sql } from "./db";
 
@@ -34,30 +34,13 @@ const SEARCH_LIMIT = 24;
 export interface PersonSummary {
     id: number;
     name: string | null;
+    /** Their handle, or null if they have never set one. Note there is no
+     * email field here at all -- not even a masked one. */
+    username: string | null;
     image: string | null;
-    /** Never the real address -- see `maskEmail`. */
-    maskedEmail: string;
     /** How many of their rankings are public. Zero is worth showing: it is the
      * honest answer to "is there anything to look at here". */
     publicRankings: number;
-}
-
-/**
- * `sam@example.com` -> `sa••••@example.com`.
- *
- * The domain is kept whole because it is what makes an address recognisable
- * ("the gmail one, not the work one") and is not itself identifying. The local
- * part keeps at most its first two characters; anything shorter than that
- * keeps one, and an address with no `@` at all -- which should not exist, but
- * this must not throw on bad data -- is masked entirely.
- */
-export function maskEmail(email: string): string {
-    const at = email.lastIndexOf("@");
-    if (at <= 0) return "•••";
-    const local = email.slice(0, at);
-    const domain = email.slice(at);
-    const keep = local.length <= 2 ? 1 : 2;
-    return `${local.slice(0, keep)}${"•".repeat(Math.max(2, local.length - keep))}${domain}`;
 }
 
 /** True when the query is a whole email address rather than a name fragment.
@@ -70,7 +53,7 @@ function looksLikeEmail(query: string): boolean {
 interface PersonRow {
     id: number;
     name: string | null;
-    email: string;
+    username: string | null;
     image: string | null;
     public_rankings: string;
 }
@@ -79,8 +62,8 @@ function toSummary(row: PersonRow): PersonSummary {
     return {
         id: row.id,
         name: row.name,
+        username: row.username,
         image: row.image,
-        maskedEmail: maskEmail(row.email),
         // COUNT comes back from postgres as a bigint, which postgres.js hands
         // over as a string rather than silently losing precision.
         publicRankings: Number(row.public_rankings),
@@ -88,7 +71,11 @@ function toSummary(row: PersonRow): PersonSummary {
 }
 
 /**
- * Finds people by name fragment, or by exact email address.
+ * Finds people by username or display-name fragment, or by exact email address.
+ *
+ * Username matches are ranked above name matches, because someone typing
+ * "sam" who gets an exact handle back has found who they were looking for,
+ * whereas a name substring is a guess.
  *
  * `viewerId` is excluded from results -- you are not someone you can follow,
  * and seeing yourself in a people search is noise every time.
@@ -99,9 +86,10 @@ export async function searchPeople(query: string, viewerId: number | null): Prom
 
     const exclude = viewerId ?? -1;
 
+    const like = `%${trimmed}%`;
     const rows = looksLikeEmail(trimmed)
         ? await sql<PersonRow[]>`
-              SELECT u.id, u.name, u.email, u.image,
+              SELECT u.id, u.name, u.username, u.image,
                      (SELECT COUNT(*) FROM tournaments t
                        WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
               FROM users u
@@ -109,12 +97,20 @@ export async function searchPeople(query: string, viewerId: number | null): Prom
               LIMIT ${SEARCH_LIMIT}
           `
         : await sql<PersonRow[]>`
-              SELECT u.id, u.name, u.email, u.image,
+              SELECT u.id, u.name, u.username, u.image,
                      (SELECT COUNT(*) FROM tournaments t
                        WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
               FROM users u
-              WHERE u.name ILIKE ${"%" + trimmed + "%"} AND u.id <> ${exclude}
-              ORDER BY public_rankings DESC, lower(u.name)
+              WHERE (u.username ILIKE ${like} OR u.name ILIKE ${like}) AND u.id <> ${exclude}
+              ORDER BY
+                -- An exact handle first, then any handle match, then a name
+                -- match: typing someone's username should put them at the top
+                -- rather than behind whoever happens to have more public
+                -- rankings.
+                (lower(u.username) = ${trimmed.toLowerCase()}) DESC,
+                (u.username ILIKE ${like}) DESC,
+                public_rankings DESC,
+                lower(u.name)
               LIMIT ${SEARCH_LIMIT}
           `;
 
@@ -124,11 +120,38 @@ export async function searchPeople(query: string, viewerId: number | null): Prom
 /** One person, for their profile page. Null when there is no such user. */
 export async function getPerson(id: number): Promise<PersonSummary | null> {
     const rows = await sql<PersonRow[]>`
-        SELECT u.id, u.name, u.email, u.image,
+        SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
                  WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
         FROM users u
         WHERE u.id = ${id}
+    `;
+    return rows[0] ? toSummary(rows[0]) : null;
+}
+
+/**
+ * One person by the handle in a /u/<handle> URL.
+ *
+ * Accepts a username or a numeric id, because profile links shared before
+ * usernames existed point at ids and must keep working. The two can never be
+ * confused: lib/username.ts refuses an all-digit handle precisely so this
+ * branch stays unambiguous.
+ */
+export async function getPersonByHandle(handle: string): Promise<PersonSummary | null> {
+    const trimmed = handle.trim();
+    if (!trimmed) return null;
+
+    if (/^[0-9]+$/.test(trimmed)) {
+        const id = Number(trimmed);
+        return Number.isSafeInteger(id) && id > 0 ? getPerson(id) : null;
+    }
+
+    const rows = await sql<PersonRow[]>`
+        SELECT u.id, u.name, u.username, u.image,
+               (SELECT COUNT(*) FROM tournaments t
+                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+        FROM users u
+        WHERE lower(u.username) = ${trimmed.toLowerCase()}
     `;
     return rows[0] ? toSummary(rows[0]) : null;
 }
@@ -144,7 +167,7 @@ export async function getPerson(id: number): Promise<PersonSummary | null> {
 export async function listActivePeople(viewerId: number | null, limit = 24): Promise<PersonSummary[]> {
     const exclude = viewerId ?? -1;
     const rows = await sql<PersonRow[]>`
-        SELECT u.id, u.name, u.email, u.image,
+        SELECT u.id, u.name, u.username, u.image,
                COUNT(t.id) AS public_rankings
         FROM users u
         JOIN tournaments t ON t.user_id = u.id AND t.visibility = 'public'
