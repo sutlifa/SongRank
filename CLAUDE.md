@@ -148,6 +148,10 @@ not a SELECT-first check). `lib/username.ts` = pure rules + `profilePath`;
 `profilePath` lives there, not in people.ts, because client components import it
 and people.ts pulls in `postgres`. All-digit handles are banned so `/u/<handle>`
 stays unambiguous with the numeric-id form that old links use.
+`UsernameBanner` prompts any signed-in account without one, site-wide. It asks
+via `GET /api/account/username` rather than calling `auth()` in the root layout,
+which would make every statically prerenderable page dynamic forever to answer a
+once-per-account question.
 
 Friends are one-way and gate nothing; they only order `/browse`.
 

@@ -42,8 +42,10 @@ round schedule would need.
   ranking — then compare the two: rank correlation, biggest disagreements, and a full
   side-by-side table.
 - **People** — pick a `@username` and friends can find you without either of you handing out
-  an email address. Search by username or display name. Following is one-way and private: it
-  only decides whose rankings come first on Browse.
+  an email address. Search by username or display name. Anyone signed in without a handle gets
+  a site-wide prompt until they pick one, since accounts made before usernames existed are
+  otherwise unfindable without anyone realising. Following is one-way and private: it only
+  decides whose rankings come first on Browse.
 
 ## How the ranking works
 

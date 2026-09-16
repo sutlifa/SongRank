@@ -1,7 +1,31 @@
 import { NextResponse } from "next/server";
 import { requireUser, isGuardFailure } from "@/lib/auth-guard";
 import { checkUsername, normaliseUsername } from "@/lib/username";
-import { setUsername } from "@/lib/users";
+import { getUsername, setUsername } from "@/lib/users";
+
+/**
+ * The caller's own handle, or null if they have never set one.
+ *
+ * Exists so UsernameBanner can ask the one question it needs ("do I have one?")
+ * from any page without the root layout having to call `auth()` -- which would
+ * make every route in the app dynamic to answer a question that matters once
+ * per account.
+ *
+ * Returns only the caller's own handle. There is no id parameter, so this can't
+ * be used to look anyone else up; /api/people is the route for that, and it
+ * returns no email address either.
+ */
+export async function GET() {
+    const g = await requireUser();
+    if (isGuardFailure(g)) return g.response;
+
+    try {
+        return NextResponse.json({ username: await getUsername(g.userId) });
+    } catch (err) {
+        console.error("GET USERNAME ERROR:", err);
+        return NextResponse.json({ error: "Could not load your username" }, { status: 500 });
+    }
+}
 
 /**
  * Sets or changes the caller's handle.

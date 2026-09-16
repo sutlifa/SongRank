@@ -3,6 +3,7 @@ import { Analytics } from "@vercel/analytics/next";
 import Providers from "@/components/Providers";
 import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
+import UsernameBanner from "@/components/UsernameBanner";
 import { isAuthConfigured } from "@/lib/authConfig";
 
 export const metadata = {
@@ -27,6 +28,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <body className="flex min-h-screen flex-col bg-bg text-fg">
                 <Providers authEnabled={authEnabled}>
                     <SiteHeader authEnabled={authEnabled} />
+                    {/* Only where there are accounts to have handles. Inside
+                        Providers because it calls useSession(); see
+                        components/Providers.tsx for why that gating exists. */}
+                    {authEnabled && <UsernameBanner />}
                     <main className="flex-1">{children}</main>
                     <SiteFooter />
                 </Providers>
