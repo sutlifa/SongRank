@@ -100,9 +100,11 @@ export default function PrivacyPage() {
                     cannot be used to discover addresses that aren&apos;t already known.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Following someone is one-way and private to you: it only decides whose public
-                    rankings appear first on your Browse page. They are not told, and it gives
-                    neither of you access to anything the other has not made public.
+                    Following someone is one-way: it only decides whose public rankings appear first
+                    on your Browse page, and it gives neither of you access to anything the other
+                    has not made public. They are not notified. Who you follow, and who follows you,
+                    are both shown on your profile — so following someone is a public act, even
+                    though it grants nothing.
                 </p>
             </section>
 

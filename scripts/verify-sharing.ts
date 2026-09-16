@@ -220,7 +220,39 @@ check([...(await f.friendIds(bob))].join() === String(alice), "friendIds returns
 check((await f.removeFriend(bob, alice)) === true, "unfollowing works");
 check((await f.removeFriend(bob, alice)) === false, "unfollowing twice reports no change");
 await f.addFriend(bob, alice);
-console.log("  one-way, idempotent, no self-follow, no phantom users");
+await f.addFriend(carol, alice);
+
+// Both directions, as a profile shows them.
+const aliceCounts = await f.followCounts(alice);
+check(aliceCounts.followers === 2, `Alice should have 2 followers, got ${aliceCounts.followers}`);
+check(aliceCounts.following === 0, `Alice follows nobody, got ${aliceCounts.following}`);
+const bobCounts = await f.followCounts(bob);
+check(bobCounts.following === 1, `Bob follows one person, got ${bobCounts.following}`);
+check(bobCounts.followers === 0, `nobody follows Bob, got ${bobCounts.followers}`);
+
+const aliceFollowers = await f.listFollowers(alice);
+check(aliceFollowers.length === 2, `Alice's follower list should have 2 rows, got ${aliceFollowers.length}`);
+check(
+    aliceFollowers.map((p) => p.id).sort().join() === [bob, carol].sort().join(),
+    "Alice's followers should be exactly Bob and Carol"
+);
+check(
+    !JSON.stringify(aliceFollowers).includes("@example.com"),
+    "a follower list must not carry an email address either"
+);
+check((await f.listFollowers(bob)).length === 0, "Bob has no followers");
+check((await f.listFriends(alice)).length === 0, "Alice follows nobody");
+// The two directions must not be confused -- the classic way to get this
+// wrong is joining on the same column twice.
+check(
+    (await f.listFriends(bob))[0]?.id === alice && (await f.listFollowers(alice))[0] !== undefined,
+    "following and followers must read opposite columns of the same row"
+);
+await f.removeFriend(carol, alice);
+console.log(
+    `  one-way, idempotent, no self-follow, no phantom users; ` +
+        `both directions counted separately (Alice: ${aliceCounts.followers} followers, ${aliceCounts.following} following)`
+);
 
 // --- the people directory --------------------------------------------------
 console.log("\nPeople directory:");

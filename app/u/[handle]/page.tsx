@@ -4,10 +4,11 @@ import { auth } from "@/auth";
 import { hasDatabase } from "@/lib/db";
 import { isAuthConfigured } from "@/lib/authConfig";
 import { getPersonByHandle } from "@/lib/people";
-import { isFriend } from "@/lib/friends";
+import { followCounts, isFriend, listFollowers, listFriends } from "@/lib/friends";
 import { listPublicTournamentsByUser } from "@/lib/queries";
 import FriendButton from "@/components/FriendButton";
 import PublicRankingCard from "@/components/PublicRankingCard";
+import PersonRow from "@/components/PersonRow";
 import SharingUnavailable from "@/components/SharingUnavailable";
 
 export const dynamic = "force-dynamic";
@@ -32,9 +33,12 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
     const viewerId = session?.user?.id ?? null;
     const isSelf = viewerId === person.id;
 
-    const [rankings, following] = await Promise.all([
+    const [rankings, viewerFollows, counts, following, followers] = await Promise.all([
         listPublicTournamentsByUser(person.id),
         viewerId && !isSelf ? isFriend(viewerId, person.id) : Promise.resolve(false),
+        followCounts(person.id),
+        listFriends(person.id),
+        listFollowers(person.id),
     ]);
 
     const name = person.name?.trim() || person.username || "Someone";
@@ -55,13 +59,17 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
                     )}
                     <p className="mt-1 text-sm text-fg-muted">
                         {person.publicRankings} public {person.publicRankings === 1 ? "ranking" : "rankings"}
+                        <span className="mx-1.5">·</span>
+                        {counts.following} following
+                        <span className="mx-1.5">·</span>
+                        {counts.followers} {counts.followers === 1 ? "follower" : "followers"}
                     </p>
                 </div>
             </header>
 
             {viewerId && !isSelf && (
                 <div className="mb-8">
-                    <FriendButton personId={person.id} personName={name} initiallyFriend={following} />
+                    <FriendButton personId={person.id} personName={name} initiallyFriend={viewerFollows} />
                 </div>
             )}
             {isSelf && (
@@ -100,6 +108,51 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
                     ))}
                 </div>
             )}
+
+            {/* Both directions of the follow relation, on every profile.
+                Following is a public act here -- it grants access to nothing
+                and only decides ordering on a browse page -- and a follower
+                list that were somehow private would be odd to maintain when
+                every row of it is visible from the other side anyway. */}
+            <div className="mt-12 grid gap-8 sm:grid-cols-2">
+                <FollowList
+                    heading={`Following (${counts.following})`}
+                    people={following}
+                    empty={isSelf ? "You're not following anyone yet." : `${name} isn't following anyone yet.`}
+                />
+                <FollowList
+                    heading={`Followers (${counts.followers})`}
+                    people={followers}
+                    empty={isSelf ? "Nobody follows you yet." : `Nobody follows ${name} yet.`}
+                />
+            </div>
         </div>
+    );
+}
+
+function FollowList({
+    heading,
+    people,
+    empty,
+}: {
+    heading: string;
+    people: Awaited<ReturnType<typeof listFriends>>;
+    empty: string;
+}) {
+    return (
+        <section>
+            <h2 className="mb-3 text-lg font-semibold">{heading}</h2>
+            {people.length === 0 ? (
+                <p className="text-sm text-fg-muted">{empty}</p>
+            ) : (
+                <ul className="space-y-2">
+                    {people.map((person) => (
+                        <li key={person.id}>
+                            <PersonRow person={person} />
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </section>
     );
 }

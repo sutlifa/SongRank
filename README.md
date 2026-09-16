@@ -44,8 +44,9 @@ round schedule would need.
 - **People** — pick a `@username` and friends can find you without either of you handing out
   an email address. Search by username or display name. Anyone signed in without a handle gets
   a site-wide prompt until they pick one, since accounts made before usernames existed are
-  otherwise unfindable without anyone realising. Following is one-way and private: it only
-  decides whose rankings come first on Browse.
+  otherwise unfindable without anyone realising. Following is one-way: it only
+  decides whose rankings come first on Browse. Profiles show both directions — who someone
+  follows and who follows them.
 
 ## How the ranking works
 

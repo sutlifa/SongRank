@@ -40,6 +40,54 @@ export async function listFriends(userId: number): Promise<PersonSummary[]> {
     }));
 }
 
+/**
+ * Everyone who has added `userId` -- the other direction of the same table.
+ *
+ * Visible on a profile, like the following list. Following is a public act
+ * here: it is how you say "show me this person's rankings first", it gives
+ * access to nothing, and a follower list that were somehow secret would be an
+ * odd thing to maintain when every row of it can be inferred from the other
+ * side anyway.
+ */
+export async function listFollowers(userId: number): Promise<PersonSummary[]> {
+    const rows = await sql<FriendRow[]>`
+        SELECT u.id, u.name, u.username, u.image,
+               (SELECT COUNT(*) FROM tournaments t
+                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+        FROM friends f
+        JOIN users u ON u.id = f.user_id
+        WHERE f.friend_id = ${userId}
+        ORDER BY lower(coalesce(u.username, u.name))
+    `;
+    return rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        username: row.username,
+        image: row.image,
+        publicRankings: Number(row.public_rankings),
+    }));
+}
+
+/**
+ * How many people someone follows, and how many follow them.
+ *
+ * One round trip for both, because a profile always wants the pair and two
+ * queries to count two columns of the same small table is wasteful in the
+ * literal sense -- the planner reads it once either way.
+ */
+export async function followCounts(userId: number): Promise<{ following: number; followers: number }> {
+    const rows = await sql<{ following: string; followers: string }[]>`
+        SELECT
+          COUNT(*) FILTER (WHERE user_id = ${userId})   AS following,
+          COUNT(*) FILTER (WHERE friend_id = ${userId}) AS followers
+        FROM friends
+        WHERE user_id = ${userId} OR friend_id = ${userId}
+    `;
+    // COUNT is a bigint, which postgres.js hands over as a string rather than
+    // silently losing precision.
+    return { following: Number(rows[0]?.following ?? 0), followers: Number(rows[0]?.followers ?? 0) };
+}
+
 /** Just the ids, for deciding which cards to badge as a friend's. */
 export async function friendIds(userId: number): Promise<Set<number>> {
     const rows = await sql<{ friend_id: number }[]>`
