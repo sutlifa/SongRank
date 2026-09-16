@@ -23,9 +23,10 @@ round schedule would need.
   records a tie. The ratings apply it as an Elo draw, so neither song is credited with a win
   it didn't earn, and the pair is left out of the head-to-head tiebreak. Ties show in the
   standings as the third number in `4-2-1`.
-- **Stop any time** — the ranking is valid after any number of votes; a progress readout
-  shows how settled it is, and a small or lopsided list can finish before its estimated
-  matchup count.
+- **Stop any time** — the ranking is valid after any number of votes. A readout shows the
+  fraction of all pairs the engine can already order confidently ("how much of the final
+  answer is decided if I stop now"), and a small or lopsided list can finish before its
+  estimated matchup count.
 - **Save and resume — signed-in only** — save/resume needs a Google account by product
   decision; a signed-out ranking lives only in the current browser tab. The build page
   warns about this prominently before you start, since a large Thorough ranking is

@@ -733,6 +733,84 @@ console.log("\nTies (coin flip):");
     );
 }
 
+// ---------------------------------------------------------------------------
+// The "ranking is N% settled" readout
+// ---------------------------------------------------------------------------
+//
+// This shipped pinned at 0% for every large list: it was the fraction of
+// ADJACENT pairs separated by an absolute 85-point rating gap, and on a
+// 200-song field neighbours sit about 5 points apart, so the readout could
+// never move off zero however many matchups were played. Small fields hid it
+// completely -- a handful of songs really can spread that far apart -- which
+// is why every check in this file passed while the number was useless on the
+// only lists big enough for anyone to care about the answer.
+//
+// So the check has to be done at a size where the bug was visible, and it has
+// to assert movement, not just a plausible-looking value.
+
+console.log("\nConfidence readout (must actually move on a large field):");
+{
+    const n = 96;
+    const rng = mulberry32(31337);
+    let t = makeTournament(n, "thorough");
+
+    const startConfidence = deriveRanking(t).confidence;
+    check(startConfidence === 0, `confidence before any vote should be 0, got ${startConfidence}`);
+
+    let played = 0;
+    let halfway: number | null = null;
+    let guard = 0;
+    for (;;) {
+        const st = deriveRanking(t);
+        if (st.status !== "in_progress") break;
+        if (guard++ > 20000) {
+            fail("confidence readout: tournament did not complete");
+            break;
+        }
+        // Sampled once, at the midpoint of the estimated budget, so "did it
+        // move" is measured against real mid-run state rather than the end.
+        if (halfway === null && played >= Math.floor(st.matchupsPlanned / 2)) halfway = st.confidence;
+        const cur = st.current!;
+        t = recordRankingVote(t, cur.pairingId, pickWinner(cur.a, cur.b, n, "noisy-favourite", rng));
+        played += 1;
+    }
+    const finalConfidence = deriveRanking(t).confidence ?? 0;
+    const mid = halfway ?? 0;
+
+    check(mid > 0.15, `confidence stuck near zero at the halfway point (${(mid * 100).toFixed(0)}%) on n=${n}`);
+    check(
+        finalConfidence > 0.5,
+        `confidence ended at ${(finalConfidence * 100).toFixed(0)}% on n=${n} -- the readout is not tracking progress`
+    );
+    check(finalConfidence > mid, "confidence did not improve between the halfway point and the end");
+    console.log(
+        `  n=${n}: 0% at the start -> ${(mid * 100).toFixed(0)}% at the halfway point -> ` +
+            `${(finalConfidence * 100).toFixed(0)}% after ${played} matchups`
+    );
+
+    // A small field is the case that always worked; it must still reach a high
+    // number, so the fix didn't trade one size for the other.
+    {
+        const small = 10;
+        const rng2 = mulberry32(31338);
+        let st2 = makeTournament(small, "thorough");
+        let g2 = 0;
+        for (;;) {
+            const st = deriveRanking(st2);
+            if (st.status !== "in_progress") break;
+            if (g2++ > 5000) {
+                fail("confidence readout (small): tournament did not complete");
+                break;
+            }
+            const cur = st.current!;
+            st2 = recordRankingVote(st2, cur.pairingId, pickWinner(cur.a, cur.b, small, "seeded-favourite", rng2));
+        }
+        const c = deriveRanking(st2).confidence ?? 0;
+        check(c > 0.75, `confidence on a cleanly-decided n=${small} field ended at only ${(c * 100).toFixed(0)}%`);
+        console.log(`  n=${small}, no voting noise: ${(c * 100).toFixed(0)}%`);
+    }
+}
+
 const seconds = ((Date.now() - start) / 1000).toFixed(1);
 console.log(
     `\n${tournaments} tournaments, ${totalMatchups} matchups, ${seconds}s\n` +

@@ -94,7 +94,8 @@ function nextRd(gamesPlayed: number): number {
  * This was tuned empirically against RANKING_DEPTH_FACTORS' n * log2(n)
  * budgets, not chosen a priori: a much smaller K (K = RD / 8, an earlier
  * version of this function) never let adjacent standings separate enough
- * for `confidenceOf` to move off zero within any realistic budget -- see
+ * for `adjacentSettledFraction` to move off zero within any realistic
+ * budget -- see
  * scripts/verify-ranking.ts's early-stop checks, which are what this value
  * has to keep passing.
  */
@@ -476,12 +477,15 @@ function roundRobinPairs(ids: string[]): [string, string][] {
 const SETTLE_E_THRESHOLD = 0.62;
 
 /**
- * Fraction of adjacent pairs (in rating order) that are confidently
- * separated -- see `SETTLE_E_THRESHOLD`. 1.0 means the whole ranking is
- * settled enough that another matchup is unlikely to change anyone's
- * relative order; this is both the early-stop condition (see
- * `deriveRanking`) and the confidence number exposed to the UI ("ranking is
- * 84% settled").
+ * Fraction of ADJACENT pairs (in rating order) that are confidently
+ * separated -- see `SETTLE_E_THRESHOLD`. 1.0 means no neighbour in the whole
+ * standings is still in doubt, so another matchup is unlikely to change
+ * anyone's relative order.
+ *
+ * This is the **early-stop condition only** (see `deriveRanking`). It used
+ * to double as the "ranking is N% settled" number shown to the user, and was
+ * badly wrong in that second job -- see `rankingConfidence` below, which
+ * replaced it there.
  *
  * Deliberately scale-independent of RD: an earlier version compared the raw
  * rating gap to the pair's combined RD directly, which sounds more
@@ -490,7 +494,7 @@ const SETTLE_E_THRESHOLD = 0.62;
  * strategy. Expected score is a monotonic function of the gap alone and
  * needs no separate uncertainty term to be meaningful.
  */
-function confidenceOf(sortedIds: string[], ratings: Map<string, RatingState>): number {
+function adjacentSettledFraction(sortedIds: string[], ratings: Map<string, RatingState>): number {
     if (sortedIds.length < 2) return 1;
     let settled = 0;
     for (let i = 0; i < sortedIds.length - 1; i++) {
@@ -499,6 +503,79 @@ function confidenceOf(sortedIds: string[], ratings: Map<string, RatingState>): n
         if (expectedScore(a.rating, b.rating) >= SETTLE_E_THRESHOLD) settled += 1;
     }
     return settled / (sortedIds.length - 1);
+}
+
+/**
+ * How many standard errors of separation a pair needs before we claim to know
+ * which of the two is better. At z = 1 the gap has to exceed the combined
+ * uncertainty in the two ratings, which puts the odds of that ordering being
+ * right at roughly 5 in 6 -- "a clear lean, not near-certainty", the same bar
+ * `SETTLE_E_THRESHOLD` aims at, just expressed against the right scale.
+ */
+const CONFIDENT_Z = 1;
+
+/**
+ * The "ranking is N% settled" number shown while playing: the fraction of ALL
+ * pairs in the field whose relative order the engine now knows confidently.
+ *
+ * Read it as "if you stopped right now, this much of the final answer is
+ * already decided" -- which is the actual question someone staring at a
+ * 1,900-matchup ranking wants answered.
+ *
+ * ## Why not just reuse `adjacentSettledFraction`
+ *
+ * It did, and on a large list the readout sat at 0% from the first matchup to
+ * the last. The reason is a scale mismatch, not a coding error.
+ * `SETTLE_E_THRESHOLD` of 0.62 is an *absolute* 85-point rating gap, but the
+ * gap between neighbours shrinks as the field grows: 200 songs really do
+ * spread over about 1,400 rating points, so the typical gap between one song
+ * and the next is about 5. For all 199 of those neighbours to clear 85 points
+ * the field would have to span 17,000. It cannot, so the fraction was pinned
+ * at zero no matter how much work had been done -- true, useless, and
+ * indistinguishable from a broken counter. Small fields hid it, because there
+ * a handful of songs really can spread far enough apart, which is why the
+ * early-stop tests never caught it.
+ *
+ * Two changes fix it, and both are needed:
+ *
+ *   - **All pairs, not just neighbours.** Knowing #1 beats #150 is real
+ *     knowledge about the ranking. The adjacent-only view throws away almost
+ *     everything the engine has established and asks only the single hardest
+ *     question, n - 1 times over.
+ *   - **Measured against uncertainty, not a constant.** Early on every rating
+ *     is a wild guess with an RD of 350, and ratings scatter hundreds of
+ *     points on the first result alone -- a fixed gap would read that noise as
+ *     knowledge. Requiring the gap to beat the pair's combined standard error
+ *     makes a spread earned over many matchups count and the same spread
+ *     thrown up by two matchups not count, which is the distinction the number
+ *     exists to draw.
+ *
+ * It follows that a large field finishes below 100%, and that is honest:
+ * ~1,900 comparisons genuinely cannot pin down the order of 200 songs to the
+ * last adjacent pair. The early stop keeps its own stricter rule, so nothing
+ * about when a ranking ends changes -- only what the readout says while it
+ * runs.
+ *
+ * O(n^2), which at the 256-song ceiling is ~33k comparisons of two floats --
+ * far below the cost of the vote replay this runs at the end of, and done
+ * once per derive rather than once per vote.
+ */
+function rankingConfidence(sortedIds: string[], ratings: Map<string, RatingState>): number {
+    const n = sortedIds.length;
+    if (n < 2) return 1;
+
+    let confident = 0;
+    for (let i = 0; i < n - 1; i++) {
+        const a = ratings.get(sortedIds[i])!;
+        for (let j = i + 1; j < n; j++) {
+            const b = ratings.get(sortedIds[j])!;
+            // sortedIds is rating-descending, so this gap is already >= 0 for
+            // every j > i and needs no Math.abs.
+            const standardError = Math.sqrt(a.rd * a.rd + b.rd * b.rd);
+            if (a.rating - b.rating >= CONFIDENT_Z * standardError) confident += 1;
+        }
+    }
+    return confident / ((n * (n - 1)) / 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -551,9 +628,11 @@ export interface RankingDerived {
     matchupsPlanned: number;
     /** True once the top-cut playoff has started. */
     inPlayoffs: boolean;
-    /** Fraction of adjacent standings confidently separated -- see
-     * `confidenceOf`. Null only for the n = 0/1 degenerate cases, where the
-     * concept doesn't apply. */
+    /** Fraction of all pairs in the field whose relative order is known
+     * confidently -- see `rankingConfidence`, which is also where the
+     * difference between this and the engine's early-stop rule is spelled
+     * out. Null only for the n = 0/1 degenerate cases, where the concept
+     * doesn't apply. */
     confidence: number | null;
 }
 
@@ -800,7 +879,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
     if (phase === "main" && !useRoundRobin) {
         const sorted = sortByRating(ids, ratings);
         const budgetReached = mainDecided >= budget;
-        const settledEarly = confidenceOf(sorted, ratings) >= 1;
+        const settledEarly = adjacentSettledFraction(sorted, ratings) >= 1;
         if (budgetReached || settledEarly) {
             phase = shouldRunPlayoff(n) ? "playoff" : "done";
             if (phase === "playoff") {
@@ -853,7 +932,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
     status = current ? "in_progress" : "complete";
 
     const finalSorted = sortByRating(ids, ratings, { beat, wins, losses });
-    const confidence = confidenceOf(finalSorted, ratings);
+    const confidence = rankingConfidence(finalSorted, ratings);
 
     let orderedIds: string[];
     let championId: string | null;

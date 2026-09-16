@@ -81,9 +81,13 @@ export default function AboutPage() {
                     You are never required to reach that target. The ranking is valid after any
                     number of votes — stop whenever you want and you still get a complete, ordered
                     list, it just gets more confident the longer you play. A progress readout shows
-                    what fraction of the current standings are confidently settled, and a small or
-                    lopsided list can finish well before its estimated matchup count once every
-                    adjacent pair in the ranking is clearly separated. A close, evenly-matched list
+                    what fraction of all the pairs in your list the engine can already order
+                    confidently &mdash; read it as how much of the final answer is decided if you
+                    stop right now. A long list finishes short of 100%, which is honest: a few
+                    thousand comparisons genuinely cannot pin down 200 songs to the last adjacent
+                    pair. A small or lopsided list, on the other hand, can finish well before its
+                    estimated matchup count, once every neighbour in the ranking is clearly
+                    separated. A close, evenly-matched list
                     tends to use its full budget, because that is exactly when more votes keep being
                     informative.
                 </p>

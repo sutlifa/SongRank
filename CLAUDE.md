@@ -142,7 +142,13 @@ rating + uncertainty), pairing the least-predictable matchup each time, with
 anytime stopping and a top-cut playoff to guarantee a decisive #1.
 
 Target matchups ≈ `1.25 × n × log₂(n)`, with a full round-robin at n ≤ 6 and an
-early stop once every adjacent pair separates confidently.
+early stop once every adjacent pair separates confidently
+(`adjacentSettledFraction`).
+
+The displayed "N% settled" is a **different** measure (`rankingConfidence`):
+fraction of *all* pairs whose gap beats their combined RD. Don't merge the two —
+the adjacent/absolute-gap version reads 0% for every large list (neighbours sit
+~5 rating points apart; the threshold is 85) and that was a shipped bug.
 
 A matchup can also be answered "flip a coin" (`Vote.tie`), applied as an Elo draw:
 0.5 each, no win/loss credited, excluded from the head-to-head tiebreak map, but
