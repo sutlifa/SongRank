@@ -3,12 +3,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { deriveTournament, recordVote, undoLastVote } from "@/lib/tournamentEngine";
+import {
+    deriveTournament,
+    recordVote,
+    undoLastVote,
+    type UnifiedCurrentMatchup,
+} from "@/lib/tournamentEngine";
 import SongCard from "./SongCard";
 import type { ClipPlayerHandle } from "./ClipPlayer";
 import StandingsPeek from "./StandingsPeek";
 import EditableTournamentName from "./EditableTournamentName";
 import { useTournamentLoader } from "./useTournamentLoader";
+
+/**
+ * How long the chosen card stays on screen before the next pair replaces it.
+ *
+ * Long enough to read what you hit, short enough not to be in the way of
+ * someone voting quickly. The point is a misclick: two hundred matchups in,
+ * the pairs blur together, and a vote that vanishes the instant you click it
+ * leaves you with no idea what you just said -- so no idea whether to undo.
+ */
+const PICK_PAUSE_MS = 600;
 
 export default function TournamentPlayer({ id, authEnabled }: { id: string; authEnabled: boolean }) {
     const router = useRouter();
@@ -44,7 +59,43 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
         [updateTournament]
     );
 
-    const undo = useCallback(() => updateTournament((t) => undoLastVote(t)), [updateTournament]);
+    /**
+     * The matchup being SHOWN, when that is no longer the one the engine is
+     * on -- i.e. during the pause after a vote.
+     *
+     * The vote itself is recorded immediately; only the picture waits. Doing
+     * it the other way round -- hold the vote, animate, commit on a timer --
+     * reads more naturally and is wrong: closing the tab or hitting back
+     * inside those 600ms would silently drop the vote. Nothing a person has
+     * already decided should be sitting in a timeout.
+     */
+    const [pick, setPick] = useState<{ matchup: UnifiedCurrentMatchup; winnerId: string } | null>(null);
+
+    /** Records a vote and freezes the pair on screen for a beat. */
+    const choose = useCallback(
+        (matchup: UnifiedCurrentMatchup, winnerId: string, tie = false) => {
+            // Ignore anything that arrives mid-pause: a second click, or a
+            // keyboard repeat. Without this a double-click votes twice, on two
+            // different matchups, and the second one is invisible.
+            if (pick) return;
+            vote(matchup.pairingId, winnerId, tie);
+            setPick({ matchup, winnerId });
+        },
+        [pick, vote]
+    );
+
+    useEffect(() => {
+        if (!pick) return;
+        const timer = setTimeout(() => setPick(null), PICK_PAUSE_MS);
+        return () => clearTimeout(timer);
+    }, [pick]);
+
+    const undo = useCallback(() => {
+        // Clear the freeze first, or undoing during the pause would leave the
+        // old pair on screen looking like the undo hadn't worked.
+        setPick(null);
+        updateTournament((t) => undoLastVote(t));
+    }, [updateTournament]);
 
     const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
 
@@ -68,11 +119,11 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
      * because as far as the ranking is concerned it didn't land either way.
      */
     const flipCoin = useCallback(
-        (pairingId: string, a: string, b: string) => {
-            vote(pairingId, Math.random() < 0.5 ? a : b, true);
+        (matchup: UnifiedCurrentMatchup) => {
+            choose(matchup, Math.random() < 0.5 ? matchup.a : matchup.b, true);
             setFlipNote((n) => n + 1);
         },
-        [vote]
+        [choose]
     );
 
     useEffect(() => {
@@ -84,8 +135,12 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     // A tournament that's already finished (resumed from a link, or the last
     // vote just landed) belongs on the results page, not the matchup screen.
     useEffect(() => {
+        // Not while a pick is still on screen: the last vote of a ranking
+        // deserves the same beat as every other one, rather than the results
+        // page appearing out from under the click.
+        if (pick) return;
         if (derived?.status === "complete") router.replace(`/t/${id}/results`);
-    }, [derived?.status, id, router]);
+    }, [derived?.status, id, router, pick]);
 
     // Updates the progress-bar ratchet declared above. Deferred a tick past
     // the effect's own synchronous body (rather than calling setProgressPct
@@ -130,6 +185,10 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
             if (!derived?.current) return;
+            // Same reason the buttons are disabled mid-pause: a held arrow key
+            // would otherwise fire a second vote on a matchup that isn't on
+            // screen yet.
+            if (pick) return;
             const target = e.target as HTMLElement | null;
             if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
 
@@ -163,21 +222,21 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                 rightPlayerRef.current?.pause();
             } else if (e.key === "ArrowLeft") {
                 e.preventDefault();
-                vote(current.pairingId, current.a);
+                choose(current, current.a);
             } else if (e.key === "ArrowRight") {
                 e.preventDefault();
-                vote(current.pairingId, current.b);
+                choose(current, current.b);
             } else if (key === "c" && derived.supportsTies) {
                 // Guarded on supportsTies for the same reason the button is:
                 // a Swiss ranking has no draw to record, so the key must not
                 // quietly do something else there instead.
                 e.preventDefault();
-                flipCoin(current.pairingId, current.a, current.b);
+                flipCoin(current);
             }
         }
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [derived, vote, flipCoin]);
+    }, [derived, choose, flipCoin, pick]);
 
     if (!resolved) {
         return (
@@ -215,7 +274,20 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
     }
 
     const songById = new Map(tournament.songs.map((s) => [s.id, s]));
-    const current = derived.current;
+    /**
+     * The pair on screen: the frozen one during the pause after a vote,
+     * otherwise whatever the engine is on.
+     *
+     * Everything about the MATCHUP reads from this -- the label, the cards,
+     * the vote handlers -- so the frozen pair stays internally consistent.
+     * The progress bar and the settled percentage deliberately keep reading
+     * `derived`, because those describe the ranking rather than the pair, and
+     * seeing them move is the confirmation that the vote landed.
+     */
+    const current = pick?.matchup ?? derived.current;
+    /** Which side of the shown pair was chosen, during the pause. */
+    const pickedSide = (songId: string): "winner" | "loser" | null =>
+        pick ? (pick.winnerId === songId ? "winner" : "loser") : null;
 
     return (
         <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
@@ -258,9 +330,11 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             song={songById.get(current.a)!}
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
-                            onVote={() => vote(current.pairingId, current.a)}
+                            onVote={() => choose(current, current.a)}
                             onChangeVersion={(version) => changeSongVersion(current.a, version)}
                             rematch={current.isRematch}
+                            picked={pickedSide(current.a)}
+                            disabled={Boolean(pick)}
                             key={`${current.pairingId}-a`}
                         />
                         <SongCard
@@ -269,9 +343,11 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             song={songById.get(current.b)!}
                             clipSeconds={tournament.clipSeconds}
                             activeAudioRef={activeAudioRef}
-                            onVote={() => vote(current.pairingId, current.b)}
+                            onVote={() => choose(current, current.b)}
                             onChangeVersion={(version) => changeSongVersion(current.b, version)}
                             rematch={current.isRematch}
+                            picked={pickedSide(current.b)}
+                            disabled={Boolean(pick)}
                             key={`${current.pairingId}-b`}
                         />
                     </div>
@@ -280,8 +356,9 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                         <div className="mt-4 flex flex-col items-center gap-2">
                             <button
                                 type="button"
-                                onClick={() => flipCoin(current.pairingId, current.a, current.b)}
-                                className="btn-secondary"
+                                onClick={() => flipCoin(current)}
+                                disabled={Boolean(pick)}
+                                className="btn-secondary disabled:opacity-40"
                                 title="Records this matchup as a tie: neither song gains or loses ground."
                             >
                                 🪙 Can&apos;t decide — flip a coin
@@ -304,15 +381,32 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                         </div>
                     )}
 
-                    <p className="mt-4 text-center text-xs text-fg-muted">
-                        <span className="kbd">A</span> / <span className="kbd">B</span> play or pause a
-                        clip · <span className="kbd">Space</span> stop ·{" "}
-                        <span className="kbd">←</span> / <span className="kbd">→</span> vote
-                        {derived.supportsTies && (
-                            <>
-                                {" "}
-                                · <span className="kbd">C</span> flip a coin
-                            </>
+                    {/* Replaces the shortcut line during the pause rather than
+                        sitting alongside it: the whole reason for the pause is
+                        to say what just happened and what to do if it was
+                        wrong, and that reads badly competing with a keyboard
+                        legend. aria-live so it is announced, not just seen. */}
+                    <p className="mt-4 text-center text-xs" aria-live="polite">
+                        {pick ? (
+                            <span className="text-accent">
+                                Picked{" "}
+                                <span className="font-semibold">
+                                    {songById.get(pick.winnerId)?.title ?? "that one"}
+                                </span>{" "}
+                                — not what you meant? Hit Undo below.
+                            </span>
+                        ) : (
+                            <span className="text-fg-muted">
+                                <span className="kbd">A</span> / <span className="kbd">B</span> play or
+                                pause a clip · <span className="kbd">Space</span> stop ·{" "}
+                                <span className="kbd">←</span> / <span className="kbd">→</span> vote
+                                {derived.supportsTies && (
+                                    <>
+                                        {" "}
+                                        · <span className="kbd">C</span> flip a coin
+                                    </>
+                                )}
+                            </span>
                         )}
                     </p>
                 </>
