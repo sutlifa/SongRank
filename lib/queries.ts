@@ -14,6 +14,15 @@ import type { Song, Vote, ClipSeconds, RankingDepth, TournamentFormat } from "./
 
 export type Visibility = "private" | "public";
 
+/** What `saveTournament` did, for callers that need to act on a first save --
+ * see the notification hook in lib/tournamentSave.ts. */
+export interface SaveResult {
+    /** True only when this call created the row, not on any later autosave. */
+    inserted: boolean;
+    /** The source ranking actually stored, after the public/undeleted check. */
+    sourceTournamentId: string | null;
+}
+
 export interface TournamentSummary {
     id: string;
     name: string;
@@ -95,8 +104,8 @@ export async function saveTournament(args: {
      * alone afterwards.
      */
     sourceTournamentId?: string | null;
-}): Promise<void> {
-    await sql`
+}): Promise<SaveResult> {
+    const rows = await sql<{ inserted: boolean; source_tournament_id: string | null }[]>`
         INSERT INTO tournaments (id, user_id, name, clip_seconds, format, depth, songs, votes, source_tournament_id)
         VALUES (
             ${args.id},
@@ -137,7 +146,26 @@ export async function saveTournament(args: {
           -- would wipe the attribution on the very next vote.
           updated_at = now()
         WHERE tournaments.user_id = ${args.userId} AND tournaments.deleted_at IS NULL
+        -- xmax = 0 is true only for a row this statement INSERTed; an UPDATE
+        -- taken through ON CONFLICT leaves the id of the superseding
+        -- transaction there instead. It is the standard way to tell the two
+        -- halves of an upsert apart, and it is what stops every autosave --
+        -- which re-runs this same statement on every vote -- from looking like
+        -- a brand new ranking.
+        RETURNING (xmax = 0) AS inserted, source_tournament_id
     `;
+
+    // No row at all means the WHERE rejected the update: someone else's id, or
+    // a ranking sitting in the bin. Reported as "nothing happened" rather than
+    // guessed at.
+    const row = rows[0];
+    return {
+        inserted: row?.inserted === true,
+        // The STORED source, not the requested one. The subselect above drops
+        // anything that isn't a real, public, undeleted ranking, so this is
+        // the only value a caller may act on.
+        sourceTournamentId: row?.source_tournament_id ?? null,
+    };
 }
 
 /**
@@ -247,6 +275,16 @@ export async function getVisibility(userId: number, id: string): Promise<Visibil
         WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
     `;
     return rows[0]?.visibility ?? null;
+}
+
+/** Who owns a ranking, and what it is called -- so the "someone used your
+ * list" notice can be addressed to the right person and name the list. Null
+ * when there is no such ranking. */
+export async function getTournamentOwner(id: string): Promise<{ ownerId: number; name: string } | null> {
+    const rows = await sql<{ user_id: number; name: string }[]>`
+        SELECT user_id, name FROM tournaments WHERE id = ${id} AND deleted_at IS NULL
+    `;
+    return rows[0] ? { ownerId: rows[0].user_id, name: rows[0].name } : null;
 }
 
 /**

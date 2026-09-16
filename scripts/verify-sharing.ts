@@ -28,6 +28,7 @@ import * as q from "../lib/queries.ts";
 import * as f from "../lib/friends.ts";
 import * as people from "../lib/people.ts";
 import * as users from "../lib/users.ts";
+import * as notifications from "../lib/notifications.ts";
 import { compareRankings, type CompareEntry } from "../lib/compare.ts";
 import { profilePath } from "../lib/username.ts";
 import { deriveTournament, recordVote } from "../lib/tournamentEngine.ts";
@@ -505,6 +506,71 @@ console.log("\nDeleting and restoring:");
     check((await q.purgeTournament(bob, "alice-public")) === false, "nor purge it");
     check((await q.getTournament(alice, "alice-public")) !== null, "...and it is untouched after both attempts");
     console.log("  invisible everywhere while deleted, unresurrectable by autosave, restored intact, scoped to its owner");
+}
+
+// --- notifications ---------------------------------------------------------
+//
+// Two rules do the real work here and neither fails loudly if broken: nobody is
+// ever told about their own actions, and nobody can be told the same thing
+// twice. Without the second, following and unfollowing in a loop is an
+// unbounded notification stream -- trivially abusable, and merely annoying when
+// someone is just undecided.
+console.log("\nNotifications:");
+{
+    await sql`TRUNCATE notifications`;
+
+    // A follow notifies the person followed, not the follower.
+    check((await notifications.notifyFollow(alice, bob)) === true, "a follow notifies the person followed");
+    check((await notifications.unreadCount(alice)) === 1, "...and lands in their unread count");
+    check((await notifications.unreadCount(bob)) === 0, "...and not in the follower's");
+
+    // Once per person, forever.
+    check((await notifications.notifyFollow(alice, bob)) === false, "the same follow is never announced twice");
+    check((await notifications.unreadCount(alice)) === 1, "...and does not inflate the count");
+
+    // Never about yourself.
+    check((await notifications.notifyFollow(alice, alice)) === false, "nobody is notified about their own follow");
+
+    // A copy names the ranking, and is also once-per-person-per-list.
+    check(
+        (await notifications.notifyCopy(alice, bob, "alice-public")) === true,
+        "a copy notifies the list's owner"
+    );
+    check(
+        (await notifications.notifyCopy(alice, bob, "alice-public")) === false,
+        "...and is not repeated for the same list and person"
+    );
+    check((await notifications.notifyCopy(alice, alice, "alice-public")) === false, "copying your own list is silent");
+    check(
+        (await notifications.notifyCopy(alice, carol, "alice-public")) === true,
+        "a DIFFERENT person copying the same list is news"
+    );
+
+    const listed = await notifications.listNotifications(alice);
+    check(listed.length === 3, `Alice should have 3 notices, got ${listed.length}`);
+    check(listed[0].created_at >= listed[listed.length - 1].created_at, "newest first");
+    const copyRow = listed.find((n) => n.kind === "copy")!;
+    check(copyRow.tournament_name === "Alice's Beatles", "a copy notice names the list");
+    check(copyRow.actor_name !== null, "a notice names who did it");
+
+    // Reading is idempotent and scoped.
+    check((await notifications.markAllRead(alice)) === 3, "marking read clears everything unread");
+    check((await notifications.unreadCount(alice)) === 0, "...and the count goes to zero");
+    check((await notifications.markAllRead(alice)) === 0, "marking read again changes nothing");
+    check(
+        (await notifications.listNotifications(alice)).length === 3,
+        "read notices are kept, not deleted"
+    );
+
+    // A notice never outlives the person or the ranking it is about.
+    await notifications.notifyFollow(bob, carol);
+    check((await notifications.unreadCount(bob)) === 1, "Bob has a notice from Carol");
+    await users.deleteUser(carol);
+    check(
+        (await notifications.unreadCount(bob)) === 0,
+        "a notice from a deleted account goes with them rather than naming nobody"
+    );
+    console.log("  addressed to the right person, never to yourself, never twice, and cleaned up on delete");
 }
 
 // --- deletion still cascades through the new tables ------------------------

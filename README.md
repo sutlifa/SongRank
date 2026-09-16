@@ -45,6 +45,9 @@ round schedule would need.
   across and nothing else** — not their votes, not their depth — and nothing you do touches
   their ranking. Then compare the two: rank correlation, biggest disagreements, and a full
   side-by-side table.
+- **Notifications** — an in-app notice when someone follows you or uses one of your public
+  lists. At most one per person per thing, ever; no email, and the bell is invisible until
+  there's something unread.
 - **People** — pick a `@username` and friends can find you without either of you handing out
   an email address. Search by username or display name. Anyone signed in without a handle gets
   a site-wide prompt until they pick one, since accounts made before usernames existed are

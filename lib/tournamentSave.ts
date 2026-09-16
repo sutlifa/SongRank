@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { saveTournament } from "./queries";
+import { getTournamentOwner, saveTournament } from "./queries";
+import { notifyCopy } from "./notifications";
 import { checkName, MAX_TOURNAMENT_BYTES } from "./auth-guard";
 import { CLIP_SECONDS, RANKING_DEPTHS, type ClipSeconds, type RankingDepth, type TournamentFormat } from "./types";
 
@@ -62,7 +63,7 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
             ? b.sourceTournamentId
             : null;
 
-    await saveTournament({
+    const saved = await saveTournament({
         userId,
         id: b.id,
         name: String(b.name).trim(),
@@ -73,6 +74,20 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
         votes: b.votes as never,
         sourceTournamentId,
     });
+
+    // "Someone used your list", told once, when the copy is first created.
+    //
+    // Gated on `inserted` because this same function backs every autosave: the
+    // statement re-runs on every vote, and without that check the owner would
+    // be notified once per matchup. Gated on the STORED source rather than the
+    // requested one, so a source that failed the public/undeleted check can't
+    // address a notice to anyone.
+    if (saved.inserted && saved.sourceTournamentId) {
+        const owner = await getTournamentOwner(saved.sourceTournamentId);
+        // notifyCopy refuses a self-notice itself, so copying your own list is
+        // silent without this needing to check.
+        if (owner) await notifyCopy(owner.ownerId, userId, saved.sourceTournamentId);
+    }
 
     return NextResponse.json({ ok: true, id: b.id });
 }

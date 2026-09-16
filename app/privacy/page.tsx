@@ -99,12 +99,22 @@ export default function PrivacyPage() {
                     username — but a partial address deliberately matches nothing, so the directory
                     cannot be used to discover addresses that aren&apos;t already known.
                 </p>
-                <p className="text-sm leading-relaxed text-fg-muted">
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
                     Following someone is one-way: it only decides whose public rankings appear first
                     on your Browse page, and it gives neither of you access to anything the other
-                    has not made public. They are not notified. Who you follow, and who follows you,
-                    are both shown on your profile — so following someone is a public act, even
-                    though it grants nothing.
+                    has not made public. Who you follow, and who follows you, are both shown on your
+                    profile — so following someone is a public act, even though it grants nothing.
+                </p>
+                <p className="text-sm leading-relaxed text-fg-muted">
+                    Two things put a notice on your{" "}
+                    <Link href="/notifications" className="text-accent hover:underline">
+                        notifications
+                    </Link>{" "}
+                    page: someone following you, and someone using one of your public lists to start
+                    their own ranking. Both are already visible on your profile, so this only saves
+                    you looking. Each is announced at most once per person, and{" "}
+                    <strong className="text-fg">we never email you</strong> — there is no mailing
+                    list and no way to be sent anything.
                 </p>
             </section>
 

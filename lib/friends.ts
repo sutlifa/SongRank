@@ -10,6 +10,7 @@
 // lib/queries.ts, for the same reason.
 
 import { sql } from "./db";
+import { notifyFollow } from "./notifications";
 import type { PersonSummary } from "./people";
 
 interface FriendRow {
@@ -124,6 +125,13 @@ export async function addFriend(userId: number, friendId: number): Promise<boole
         VALUES (${userId}, ${friendId})
         ON CONFLICT (user_id, friend_id) DO NOTHING
     `;
+
+    // Told after the follow is durable, and never allowed to undo it:
+    // notifyFollow swallows its own failures (see lib/notifications.ts). The
+    // notice is deliberately NOT conditional on the insert having been new --
+    // its own unique index already makes it once-per-person-forever, so a
+    // re-follow is silent without this needing to know that.
+    await notifyFollow(friendId, userId);
     return true;
 }
 

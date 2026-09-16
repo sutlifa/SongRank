@@ -175,3 +175,57 @@ ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS tournaments_deleted_idx
   ON tournaments (user_id, deleted_at DESC)
   WHERE deleted_at IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Notifications
+-- ---------------------------------------------------------------------------
+
+-- In-app notices: someone followed you, or someone used one of your public
+-- lists as the template for their own ranking.
+--
+-- Both events are already public facts -- follower lists are on every profile,
+-- and a copy credits its source -- so this surfaces things the person could
+-- find by looking, rather than exposing anything new.
+--
+-- `actor_id` and `tournament_id` both cascade on delete. If the person who
+-- followed you deletes their account, a notice saying "someone followed you"
+-- with nobody attached is worse than no notice, so it goes with them.
+CREATE TABLE IF NOT EXISTS notifications (
+  id             BIGSERIAL PRIMARY KEY,
+  -- Who is being told.
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Who did the thing.
+  actor_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- 'follow' or 'copy'.
+  kind           TEXT NOT NULL,
+  -- The ranking of YOURS that was copied. Null for a follow.
+  tournament_id  TEXT REFERENCES tournaments(id) ON DELETE CASCADE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at        TIMESTAMPTZ,
+  -- Nobody is ever told about their own actions: copying your own list, or the
+  -- self-follow the friends table already forbids.
+  CHECK (user_id <> actor_id)
+);
+
+-- One notice per person per thing, forever.
+--
+-- This is the anti-spam rule and it is deliberately strict. Without it,
+-- following and unfollowing someone in a loop generates an unbounded stream of
+-- "X followed you", and re-copying a list does the same -- both trivially
+-- abusable and, more commonly, just annoying when someone is undecided. A
+-- second follow from the same person is not news.
+--
+-- `coalesce` because a follow has no tournament and Postgres treats NULLs as
+-- distinct in a unique index, which would let duplicate follow rows through.
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_unique_event_idx
+  ON notifications (user_id, actor_id, kind, coalesce(tournament_id, ''));
+
+-- The list, newest first, for one person.
+CREATE INDEX IF NOT EXISTS notifications_user_idx
+  ON notifications (user_id, created_at DESC);
+
+-- The unread badge asks only this question, on every page load, so it gets an
+-- index that contains only the rows it cares about.
+CREATE INDEX IF NOT EXISTS notifications_unread_idx
+  ON notifications (user_id)
+  WHERE read_at IS NULL;

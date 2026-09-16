@@ -160,6 +160,20 @@ retried (it is our bad query, and retrying spends the quota the next song
 needs). `resolvePreviews` re-resolves unreachable songs on a second Continue but
 leaves definitive misses alone. Never collapse these back into one path.
 
+## Notifications
+
+Two kinds: `follow` and `copy`. Written through `notify` in lib/notifications.ts,
+which NEVER throws — a notice must not be able to fail the follow or the save
+that caused it. Once per (recipient, actor, kind, tournament) forever, enforced
+by a unique index, not by checking first: without it, follow/unfollow in a loop
+is an unbounded stream. Self-notices blocked in code and by a CHECK.
+
+The copy notice fires from `saveGuarded` only when `saveTournament` reports
+`inserted` (via `RETURNING (xmax = 0)`) — that same statement re-runs on EVERY
+autosave, so without the check the owner gets one notice per matchup. It also
+keys off the STORED source, so a source that failed the public check can't
+address a notice.
+
 ## Deleting
 
 Soft delete via `tournaments.deleted_at`. EVERY read path filters `deleted_at IS

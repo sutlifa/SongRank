@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import AuthButton from "./AuthButton";
+import NotificationBell from "./NotificationBell";
 
 const LINKS = [
     { href: "/browse", label: "Browse" },
@@ -43,6 +44,9 @@ export default function SiteHeader({ authEnabled }: { authEnabled: boolean }) {
                             {link.label}
                         </Link>
                     ))}
+                    {/* Before the auth button, and invisible when there is
+                        nothing unread -- see NotificationBell. */}
+                    {authEnabled && <NotificationBell />}
                     {authEnabled && <AuthButton />}
                 </nav>
 
@@ -72,8 +76,9 @@ export default function SiteHeader({ authEnabled }: { authEnabled: boolean }) {
                         </Link>
                     ))}
                     {authEnabled && (
-                        <div className="mt-1 border-t border-border pt-3">
+                        <div className="mt-1 flex items-center gap-2 border-t border-border pt-3">
                             <AuthButton />
+                            <NotificationBell />
                         </div>
                     )}
                 </nav>
