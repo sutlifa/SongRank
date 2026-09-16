@@ -25,6 +25,9 @@ export interface TournamentSummary {
     updated_at: string;
     /** So the history list can show, and let you change, who can see this. */
     visibility: Visibility;
+    /** When this was deleted, for the "recently deleted" list. Null -- and
+     * absent from every other query -- for a live ranking. */
+    deleted_at?: string | null;
 }
 
 export interface TournamentRow {
@@ -51,7 +54,7 @@ export async function listTournaments(userId: number): Promise<TournamentSummary
                updated_at,
                visibility
         FROM tournaments
-        WHERE user_id = ${userId}
+        WHERE user_id = ${userId} AND deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT 200
     `;
@@ -61,7 +64,7 @@ export async function getTournament(userId: number, id: string): Promise<Tournam
     const rows = await sql<TournamentRow[]>`
         SELECT id, name, clip_seconds, format, depth, songs, votes, created_at, updated_at
         FROM tournaments
-        WHERE id = ${id} AND user_id = ${userId}
+        WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
     `;
     return rows[0] ?? null;
 }
@@ -98,6 +101,12 @@ export async function saveTournament(args: {
             ${sql.json(args.songs as unknown as postgres.JSONValue)},
             ${sql.json(args.votes as unknown as postgres.JSONValue)}
         )
+        -- The deleted_at check in the WHERE below sits alongside the
+        -- ownership check: a background autosave, from a tab still open on a
+        -- ranking that was deleted elsewhere, must not quietly bring it back.
+        -- Restoring is an explicit act, not something a stale tab does by
+        -- accident. (No backticks in here: this is inside a tagged template,
+        -- and one would end the string.)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           clip_seconds = EXCLUDED.clip_seconds,
@@ -106,15 +115,66 @@ export async function saveTournament(args: {
           songs = EXCLUDED.songs,
           votes = EXCLUDED.votes,
           updated_at = now()
-        WHERE tournaments.user_id = ${args.userId}
+        WHERE tournaments.user_id = ${args.userId} AND tournaments.deleted_at IS NULL
     `;
 }
 
-export async function deleteTournament(userId: number, id: string): Promise<boolean> {
+/**
+ * Moves a ranking to "recently deleted" -- it stops existing everywhere a
+ * ranking is read from, but the row survives so it can be brought back.
+ *
+ * See `deleted_at` in lib/db/schema.sql for why this isn't a DELETE. Already
+ * being deleted is not an error: it leaves the caller in the state they asked
+ * for, so the second click of a double-click reports the same success as the
+ * first rather than a confusing failure.
+ */
+export async function softDeleteTournament(userId: number, id: string): Promise<boolean> {
+    const rows = await sql<{ id: string }[]>`
+        UPDATE tournaments SET deleted_at = now()
+        WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+        RETURNING id
+    `;
+    return rows.length > 0;
+}
+
+/**
+ * Brings a deleted ranking back, exactly as it was.
+ *
+ * Nothing about it changed while it was away -- the songs, the vote log and
+ * the visibility are all still in the row -- so this is a single field. Its
+ * visibility is restored too: a public ranking that was deleted and restored
+ * goes back to being public, which is what its owner last chose.
+ */
+export async function restoreTournament(userId: number, id: string): Promise<boolean> {
+    const rows = await sql<{ id: string }[]>`
+        UPDATE tournaments SET deleted_at = NULL
+        WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NOT NULL
+        RETURNING id
+    `;
+    return rows.length > 0;
+}
+
+/** The real thing: gone, with nothing to restore from. Only ever reached by an
+ * explicit "delete forever", never by the ordinary delete button. */
+export async function purgeTournament(userId: number, id: string): Promise<boolean> {
     const rows = await sql<{ id: string }[]>`
         DELETE FROM tournaments WHERE id = ${id} AND user_id = ${userId} RETURNING id
     `;
     return rows.length > 0;
+}
+
+/** Everything `userId` has deleted and not yet purged, most recent first. */
+export async function listDeletedTournaments(userId: number): Promise<TournamentSummary[]> {
+    return sql<TournamentSummary[]>`
+        SELECT id, name, clip_seconds, format, depth,
+               jsonb_array_length(songs) AS songs,
+               jsonb_array_length(votes) AS votes,
+               updated_at, visibility, deleted_at
+        FROM tournaments
+        WHERE user_id = ${userId} AND deleted_at IS NOT NULL
+        ORDER BY deleted_at DESC
+        LIMIT 100
+    `;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +222,8 @@ export async function setTournamentVisibility(
 
 export async function getVisibility(userId: number, id: string): Promise<Visibility | null> {
     const rows = await sql<{ visibility: Visibility }[]>`
-        SELECT visibility FROM tournaments WHERE id = ${id} AND user_id = ${userId}
+        SELECT visibility FROM tournaments
+        WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
     `;
     return rows[0]?.visibility ?? null;
 }
@@ -197,7 +258,7 @@ export async function getPublicTournament(id: string): Promise<(TournamentRow & 
                u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
-        WHERE t.id = ${id} AND t.visibility = 'public'
+        WHERE t.id = ${id} AND t.visibility = 'public' AND t.deleted_at IS NULL
     `;
     return rows[0] ?? null;
 }
@@ -216,22 +277,38 @@ export async function listPublicTournamentsByUser(
                u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
-        WHERE t.user_id = ${ownerId} AND t.visibility = 'public'
+        WHERE t.user_id = ${ownerId} AND t.visibility = 'public' AND t.deleted_at IS NULL
         ORDER BY t.updated_at DESC
         LIMIT ${limit}
     `;
 }
 
 /**
- * The browse feed: every public ranking, newest first.
+ * The browse feed: every public ranking except the viewer's own, newest first.
+ *
+ * `viewerId` is excluded because Browse is for finding what other people are
+ * doing. Your own rankings are already listed, with their controls, on
+ * /history -- seeing them again filed under "everyone else" reads as a bug
+ * every time, and it is the one section they could never correctly belong to.
+ *
+ * This is a per-viewer exclusion, not a property of the rows: your public
+ * rankings still appear for everybody else exactly as before -- under "from
+ * people you follow" for anyone following you, and under "everyone else" for
+ * anyone who isn't.
  *
  * Friends are not filtered or sorted here. The caller fetches its friend ids
  * once (lib/friends.ts) and splits this list in two, which keeps the SQL one
  * simple query for signed-in and signed-out visitors alike -- and means a
- * signed-out visitor, who has no friends to join against, runs exactly the
- * same query rather than a second code path.
+ * signed-out visitor, who has neither a viewer id nor friends to join against,
+ * runs exactly the same query rather than a second code path.
  */
-export async function listPublicTournaments(limit = 60): Promise<PublicTournamentSummary[]> {
+export async function listPublicTournaments(
+    viewerId: number | null,
+    limit = 60
+): Promise<PublicTournamentSummary[]> {
+    // -1 can never be a SERIAL id, so a signed-out viewer excludes nobody
+    // without needing a second version of this query.
+    const exclude = viewerId ?? -1;
     return sql<PublicTournamentSummary[]>`
         SELECT t.id, t.name,
                jsonb_array_length(t.songs) AS songs,
@@ -241,7 +318,7 @@ export async function listPublicTournaments(limit = 60): Promise<PublicTournamen
                u.image AS owner_image
         FROM tournaments t
         JOIN users u ON u.id = t.user_id
-        WHERE t.visibility = 'public'
+        WHERE t.visibility = 'public' AND t.user_id <> ${exclude} AND t.deleted_at IS NULL
         ORDER BY t.updated_at DESC
         LIMIT ${limit}
     `;
@@ -304,7 +381,7 @@ export async function copyTournament(args: {
                'private',
                t.id
         FROM tournaments t
-        WHERE t.id = ${args.sourceId} AND t.visibility = 'public'
+        WHERE t.id = ${args.sourceId} AND t.visibility = 'public' AND t.deleted_at IS NULL
         RETURNING id
     `;
     return rows.length > 0;
@@ -326,6 +403,7 @@ export async function listComparableTournaments(
         FROM tournaments
         WHERE user_id = ${userId}
           AND (source_tournament_id = ${sourceId} OR id = ${sourceId})
+          AND deleted_at IS NULL
         ORDER BY updated_at DESC
     `;
 }
@@ -345,6 +423,7 @@ export async function getComparableTournament(
         JOIN users u ON u.id = t.user_id
         WHERE t.id = ${id}
           AND (t.visibility = 'public' OR t.user_id = ${viewerId ?? -1})
+          AND t.deleted_at IS NULL
     `;
     return rows[0] ?? null;
 }

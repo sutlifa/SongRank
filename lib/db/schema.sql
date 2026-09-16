@@ -147,3 +147,31 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
 -- be declared over an expression. Postgres treats NULLs as distinct, so any
 -- number of accounts can go on having no username at all.
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username));
+
+-- ---------------------------------------------------------------------------
+-- Soft delete
+-- ---------------------------------------------------------------------------
+
+-- When this ranking was deleted, or NULL if it wasn't.
+--
+-- Deleting is now a two-stage thing: the row is marked here and disappears
+-- from every read path, and only a second, explicit "delete forever" removes
+-- it. The reason is the obvious one -- a ranking can be sixteen hundred
+-- decisions of someone's actual attention, and a hard DELETE behind a single
+-- unconfirmed button is not a proportionate thing to put next to it. There is
+-- no undo for a DELETE and no copy kept anywhere, so the row itself has to be
+-- the undo.
+--
+-- Every read in lib/queries.ts, lib/people.ts and lib/friends.ts filters on
+-- `deleted_at IS NULL`. That includes the public feed, profile counts and the
+-- comparison lookups: a deleted ranking must not go on being visible to
+-- strangers just because its owner can still get it back.
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- Partial, because the overwhelming majority of rows have a NULL here and the
+-- only query that wants the others is the "recently deleted" list for one
+-- user. Indexing the whole column would be paying for every live row to find
+-- the handful that aren't.
+CREATE INDEX IF NOT EXISTS tournaments_deleted_idx
+  ON tournaments (user_id, deleted_at DESC)
+  WHERE deleted_at IS NOT NULL;

@@ -25,7 +25,8 @@ export async function listFriends(userId: number): Promise<PersonSummary[]> {
     const rows = await sql<FriendRow[]>`
         SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
-                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                 WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
         FROM friends f
         JOIN users u ON u.id = f.friend_id
         WHERE f.user_id = ${userId}
@@ -53,7 +54,8 @@ export async function listFollowers(userId: number): Promise<PersonSummary[]> {
     const rows = await sql<FriendRow[]>`
         SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
-                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                 WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
         FROM friends f
         JOIN users u ON u.id = f.user_id
         WHERE f.friend_id = ${userId}

@@ -135,6 +135,18 @@ resolution.
 six hours. Every failure path returns `null` and the card is simply not shown, so a feed
 outage costs a card rather than a page.
 
+## Deleting a ranking
+
+Deleting is a soft delete: `tournaments.deleted_at` is set, the row disappears from every read
+path (your history, the browse feed, profiles, profile counts, comparisons, copying), and it
+moves to "Recently deleted" on `/history` where it can be restored exactly as it was. Only
+"Delete forever" runs an actual `DELETE`, and both stages ask for confirmation.
+
+The reason is blunt: a ranking can be well over a thousand decisions of someone's attention,
+there is no undo for a `DELETE` and no backup kept anywhere, so the row itself has to be the
+undo. `saveTournament`'s upsert also filters on `deleted_at IS NULL`, so a background autosave
+from a tab still open on a deleted ranking can't quietly resurrect it.
+
 ## Sharing
 
 `tournaments.visibility` defaults to `'private'`, on the column and on the `ALTER` — every

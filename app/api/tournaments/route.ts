@@ -1,14 +1,26 @@
 import { NextResponse } from "next/server";
-import { listTournaments } from "@/lib/queries";
+import { listDeletedTournaments, listTournaments } from "@/lib/queries";
 import { requireUser, isGuardFailure } from "@/lib/auth-guard";
 import { saveGuarded } from "@/lib/tournamentSave";
 
-export async function GET() {
+/**
+ * Your saved rankings. `?deleted=1` returns the recently-deleted ones instead.
+ *
+ * One route with a flag rather than two, because they are the same list read
+ * from the same table with one predicate flipped -- and because the default,
+ * with no flag, is the live list, which is what every existing caller expects.
+ */
+export async function GET(req: Request) {
     const g = await requireUser();
     if (isGuardFailure(g)) return g.response;
 
+    const deleted = new URL(req.url).searchParams.get("deleted") === "1";
+
     try {
-        return NextResponse.json({ tournaments: await listTournaments(g.userId) });
+        const tournaments = deleted
+            ? await listDeletedTournaments(g.userId)
+            : await listTournaments(g.userId);
+        return NextResponse.json({ tournaments });
     } catch (err) {
         console.error("LIST TOURNAMENTS ERROR:", err);
         return NextResponse.json({ error: "Could not load your history" }, { status: 500 });

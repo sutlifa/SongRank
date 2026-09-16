@@ -26,7 +26,7 @@ export default async function BrowsePage() {
     // viewer's friend ids -- see listPublicTournaments for why the split isn't
     // done in SQL.
     const [all, friends] = await Promise.all([
-        listPublicTournaments(),
+        listPublicTournaments(viewerId),
         viewerId ? friendIds(viewerId) : Promise.resolve(new Set<number>()),
     ]);
 
@@ -50,8 +50,18 @@ export default async function BrowsePage() {
 
             {all.length === 0 && (
                 <p className="card p-6 text-sm text-fg-muted">
-                    Nobody has made a ranking public yet. Yours could be the first — finish one, then
-                    use the &ldquo;Who can see this&rdquo; switch on its results page.
+                    Nothing to browse yet — nobody else has made a ranking public. Yours could be the
+                    first: finish one, then use the &ldquo;Who can see this&rdquo; switch on its
+                    results page.{" "}
+                    {viewerId && (
+                        <>
+                            Your own public rankings aren&apos;t listed here; they&apos;re in{" "}
+                            <Link href="/history" className="text-accent underline underline-offset-2">
+                                your history
+                            </Link>
+                            .
+                        </>
+                    )}
                 </p>
             )}
 

@@ -133,6 +133,14 @@ to find.
 7. `react-hooks` v7 flags refs read during render and sync `setState` in effects as
    hard errors. The codebase defers those by one tick; follow the existing pattern.
 
+## Deleting
+
+Soft delete via `tournaments.deleted_at`. EVERY read path filters `deleted_at IS
+NULL` — queries.ts, people.ts's public_rankings counts, friends.ts's counts.
+`saveTournament`'s ON CONFLICT WHERE also filters it, so a stale tab's autosave
+can't resurrect a deleted ranking. Only `purgeTournament` really deletes; both
+stages confirm in the UI. Never make the delete button one-click again.
+
 ## Sharing
 
 `tournaments.visibility` defaults `'private'` — never change that default. Access

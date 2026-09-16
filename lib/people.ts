@@ -91,7 +91,8 @@ export async function searchPeople(query: string, viewerId: number | null): Prom
         ? await sql<PersonRow[]>`
               SELECT u.id, u.name, u.username, u.image,
                      (SELECT COUNT(*) FROM tournaments t
-                       WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                       WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
               FROM users u
               WHERE lower(u.email) = ${trimmed.toLowerCase()} AND u.id <> ${exclude}
               LIMIT ${SEARCH_LIMIT}
@@ -99,7 +100,8 @@ export async function searchPeople(query: string, viewerId: number | null): Prom
         : await sql<PersonRow[]>`
               SELECT u.id, u.name, u.username, u.image,
                      (SELECT COUNT(*) FROM tournaments t
-                       WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                       WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
               FROM users u
               WHERE (u.username ILIKE ${like} OR u.name ILIKE ${like}) AND u.id <> ${exclude}
               ORDER BY
@@ -122,7 +124,8 @@ export async function getPerson(id: number): Promise<PersonSummary | null> {
     const rows = await sql<PersonRow[]>`
         SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
-                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                 WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
         FROM users u
         WHERE u.id = ${id}
     `;
@@ -149,7 +152,8 @@ export async function getPersonByHandle(handle: string): Promise<PersonSummary |
     const rows = await sql<PersonRow[]>`
         SELECT u.id, u.name, u.username, u.image,
                (SELECT COUNT(*) FROM tournaments t
-                 WHERE t.user_id = u.id AND t.visibility = 'public') AS public_rankings
+                 WHERE t.user_id = u.id AND t.visibility = 'public'
+                         AND t.deleted_at IS NULL) AS public_rankings
         FROM users u
         WHERE lower(u.username) = ${trimmed.toLowerCase()}
     `;
@@ -171,6 +175,7 @@ export async function listActivePeople(viewerId: number | null, limit = 24): Pro
                COUNT(t.id) AS public_rankings
         FROM users u
         JOIN tournaments t ON t.user_id = u.id AND t.visibility = 'public'
+                          AND t.deleted_at IS NULL
         WHERE u.id <> ${exclude}
         GROUP BY u.id
         ORDER BY MAX(t.updated_at) DESC

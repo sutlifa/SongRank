@@ -32,23 +32,77 @@ function looksComplete(t: TournamentSummary): boolean {
 
 export default function HistoryList() {
     const [tournaments, setTournaments] = useState<TournamentSummary[] | null>(null);
+    const [deleted, setDeleted] = useState<TournamentSummary[]>([]);
     const [error, setError] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    /**
+     * Which row is currently asking "are you sure?".
+     *
+     * A ranking can be well over a thousand decisions of someone's actual
+     * attention. This used to be a bare "x" that fired an irreversible DELETE
+     * on a single click, sitting a few pixels from the button you press to
+     * open the thing -- which is exactly how someone loses sixteen hundred
+     * votes to one misclick. Deleting is now two deliberate clicks AND
+     * recoverable afterwards; either alone would still be too thin for
+     * something with no undo.
+     */
+    const [confirmingId, setConfirmingId] = useState<string | null>(null);
+    /** Same, for the genuinely irreversible "delete forever". */
+    const [purgingId, setPurgingId] = useState<string | null>(null);
 
     useEffect(() => {
-        fetch("/api/tournaments")
-            .then((res) => (res.ok ? res.json() : Promise.reject()))
-            .then((data) => setTournaments(data.tournaments))
+        Promise.all([
+            fetch("/api/tournaments").then((res) => (res.ok ? res.json() : Promise.reject())),
+            fetch("/api/tournaments?deleted=1").then((res) => (res.ok ? res.json() : { tournaments: [] })),
+        ])
+            .then(([live, gone]) => {
+                setTournaments(live.tournaments);
+                setDeleted(gone.tournaments ?? []);
+            })
             .catch(() => setError("Could not load your history"));
     }, []);
 
+    /** Moves a ranking to "recently deleted" -- reversible, and shown as such. */
     async function handleDelete(id: string) {
-        setDeletingId(id);
+        setBusyId(id);
         try {
             const res = await fetch(`/api/tournaments/${id}`, { method: "DELETE" });
-            if (res.ok) setTournaments((prev) => prev?.filter((t) => t.id !== id) ?? prev);
+            if (res.ok) {
+                const moved = tournaments?.find((t) => t.id === id);
+                setTournaments((prev) => prev?.filter((t) => t.id !== id) ?? prev);
+                // Put it straight into the deleted list rather than refetching,
+                // so the row visibly moves from one section to the other and
+                // "it's still here, I can get it back" is immediate.
+                if (moved) setDeleted((prev) => [{ ...moved, deleted_at: new Date().toISOString() }, ...prev]);
+            }
         } finally {
-            setDeletingId(null);
+            setBusyId(null);
+            setConfirmingId(null);
+        }
+    }
+
+    async function handleRestore(id: string) {
+        setBusyId(id);
+        try {
+            const res = await fetch(`/api/tournaments/${id}`, { method: "PATCH" });
+            if (res.ok) {
+                const back = deleted.find((t) => t.id === id);
+                setDeleted((prev) => prev.filter((t) => t.id !== id));
+                if (back) setTournaments((prev) => [{ ...back, deleted_at: null }, ...(prev ?? [])]);
+            }
+        } finally {
+            setBusyId(null);
+        }
+    }
+
+    async function handlePurge(id: string) {
+        setBusyId(id);
+        try {
+            const res = await fetch(`/api/tournaments/${id}?permanent=1`, { method: "DELETE" });
+            if (res.ok) setDeleted((prev) => prev.filter((t) => t.id !== id));
+        } finally {
+            setBusyId(null);
+            setPurgingId(null);
         }
     }
 
@@ -103,19 +157,105 @@ export default function HistoryList() {
                             <Link href={`/t/${t.id}`} className="btn-secondary shrink-0 !px-3 !py-1.5 text-xs">
                                 {complete ? "View results" : "Resume"}
                             </Link>
-                            <button
-                                type="button"
-                                onClick={() => handleDelete(t.id)}
-                                disabled={deletingId === t.id}
-                                className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs text-danger"
-                                aria-label={`Delete ${t.name}`}
-                            >
-                                {deletingId === t.id ? "…" : "✕"}
-                            </button>
+                            {confirmingId === t.id ? (
+                                <span className="flex shrink-0 items-center gap-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDelete(t.id)}
+                                        disabled={busyId === t.id}
+                                        className="btn-secondary shrink-0 !bg-danger !px-2 !py-1.5 text-xs !text-danger-fg"
+                                    >
+                                        {busyId === t.id ? "…" : "Delete"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setConfirmingId(null)}
+                                        className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs"
+                                    >
+                                        Cancel
+                                    </button>
+                                </span>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmingId(t.id)}
+                                    className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs text-danger"
+                                    aria-label={`Delete ${t.name}`}
+                                >
+                                    ✕
+                                </button>
+                            )}
                         </li>
                     );
                 })}
             </ul>
+
+            {deleted.length > 0 && (
+                <section className="mt-10">
+                    <h2 className="text-lg font-semibold">Recently deleted</h2>
+                    <p className="mb-3 text-sm text-fg-muted">
+                        Deleted rankings are kept here so you can get them back. Restoring one returns
+                        it exactly as it was — every vote, and whether it was public.
+                    </p>
+                    <ul className="space-y-2">
+                        {deleted.map((t) => (
+                            <li key={t.id} className="card flex items-center gap-3 border-dashed p-4">
+                                <div className="min-w-0 flex-1">
+                                    <p className="truncate font-medium text-fg-muted">{t.name}</p>
+                                    <p className="text-xs text-fg-muted">
+                                        {t.songs} songs · {t.votes} votes · deleted{" "}
+                                        {t.deleted_at
+                                            ? new Date(t.deleted_at).toLocaleString(undefined, {
+                                                  month: "short",
+                                                  day: "numeric",
+                                                  hour: "numeric",
+                                                  minute: "2-digit",
+                                              })
+                                            : "just now"}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleRestore(t.id)}
+                                    disabled={busyId === t.id}
+                                    className="btn-secondary shrink-0 !px-3 !py-1.5 text-xs"
+                                >
+                                    {busyId === t.id ? "…" : "Restore"}
+                                </button>
+                                {purgingId === t.id ? (
+                                    <span className="flex shrink-0 items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => handlePurge(t.id)}
+                                            disabled={busyId === t.id}
+                                            className="btn-secondary shrink-0 !bg-danger !px-2 !py-1.5 text-xs !text-danger-fg"
+                                            title="This cannot be undone."
+                                        >
+                                            Delete forever
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPurgingId(null)}
+                                            className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </span>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => setPurgingId(t.id)}
+                                        className="btn-ghost shrink-0 !px-2 !py-1.5 text-xs text-danger"
+                                        aria-label={`Permanently delete ${t.name}`}
+                                    >
+                                        ✕
+                                    </button>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
         </div>
     );
 }

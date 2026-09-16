@@ -118,12 +118,33 @@ check((await q.getComparableTournament(null, "alice-public")) !== null, "a signe
 check((await q.setTournamentVisibility(bob, "alice-public", "private")) === false, "Bob must not be able to unpublish Alice's ranking");
 check((await q.getPublicTournament("alice-public")) !== null, "...and it must still be public afterwards");
 
-const feed = await q.listPublicTournaments();
+const feed = await q.listPublicTournaments(bob);
 check(
     feed.length === 1 && feed[0].id === "alice-public",
     `the browse feed must contain public rows only -- got ${feed.map((r) => r.id).join(", ")}`
 );
-console.log(`  private rankings invisible in every read path; feed has ${feed.length} row`);
+
+// Browse is for other people's rankings. Yours live on /history, and seeing
+// them again filed under "everyone else" reads as a bug -- it is the one
+// section they could never correctly belong to.
+check(
+    (await q.listPublicTournaments(alice)).every((r) => r.owner_id !== alice),
+    "the browse feed must not contain the viewer's OWN public rankings"
+);
+// ...but the exclusion is per viewer, not a property of the row: it must still
+// be there for everyone else, and for a signed-out visitor.
+check(
+    (await q.listPublicTournaments(bob)).some((r) => r.owner_id === alice),
+    "Alice's public ranking must still appear for other signed-in viewers"
+);
+check(
+    (await q.listPublicTournaments(null)).some((r) => r.owner_id === alice),
+    "...and for a signed-out visitor, who excludes nobody"
+);
+console.log(
+    `  private rankings invisible in every read path; feed has ${feed.length} row; ` +
+        `own rankings excluded per viewer, not globally`
+);
 
 // --- copying ---------------------------------------------------------------
 console.log("\nCopying a list:");
@@ -363,6 +384,92 @@ check(
 check((await people.getPerson(carol))!.publicRankings === 0, "Carol exists with nothing public");
 check((await q.listPublicTournamentsByUser(alice)).length === 1, "a profile lists public rankings only");
 console.log("  found by handle or name; no email in any payload; handles unique case-insensitively");
+
+// --- soft delete -----------------------------------------------------------
+//
+// Deleting a ranking must make it vanish from every read path -- including the
+// public ones, so a deleted ranking does not go on being visible to strangers
+// just because its owner can still get it back -- while staying recoverable.
+console.log("\nDeleting and restoring:");
+{
+    await q.setTournamentVisibility(alice, "alice-public", "public");
+    check((await q.softDeleteTournament(alice, "alice-public")) === true, "deleting a ranking succeeds");
+    check(
+        (await q.softDeleteTournament(alice, "alice-public")) === false,
+        "deleting it twice reports no change rather than erroring"
+    );
+
+    // Gone from everywhere it could be read.
+    check((await q.getTournament(alice, "alice-public")) === null, "a deleted ranking is gone from your own history");
+    check((await q.getPublicTournament("alice-public")) === null, "...and from the public read path");
+    check(
+        (await q.listPublicTournaments(bob)).every((r) => r.id !== "alice-public"),
+        "...and from the browse feed"
+    );
+    check(
+        (await q.listPublicTournamentsByUser(alice)).length === 0,
+        "...and from its owner's profile"
+    );
+    check(
+        (await q.getComparableTournament(bob, "alice-public")) === null,
+        "...and from comparison, so an existing compare link stops resolving"
+    );
+    check(
+        (await q.getVisibility(alice, "alice-public")) === null,
+        "...and from the visibility lookup"
+    );
+    check(
+        (await people.getPerson(alice))!.publicRankings === 0,
+        "...and stops being counted on the people directory"
+    );
+    check(
+        (await q.copyTournament({
+            userId: bob,
+            sourceId: "alice-public",
+            newId: "copy-of-deleted",
+            name: "x",
+            depth: "thorough",
+            clipSeconds: 30,
+        })) === false,
+        "...and cannot be copied"
+    );
+
+    // An autosave from a tab still open on it must not resurrect it.
+    await save(alice, "alice-public", "Sneaky resurrection", []);
+    check(
+        (await q.getTournament(alice, "alice-public")) === null,
+        "a background autosave must NOT bring a deleted ranking back"
+    );
+
+    // But it is still there, and comes back exactly as it was.
+    const bin = await q.listDeletedTournaments(alice);
+    check(bin.length === 1 && bin[0].id === "alice-public", `the deleted list should hold it, got ${bin.length}`);
+    check(bin[0].deleted_at != null, "a deleted ranking records when it was deleted");
+    check(bin[0].name === "Alice's Beatles", "the failed autosave must not even have renamed it");
+
+    check((await q.restoreTournament(alice, "alice-public")) === true, "restoring succeeds");
+    check((await q.restoreTournament(alice, "alice-public")) === false, "restoring twice reports no change");
+    const back = await q.getTournament(alice, "alice-public");
+    check(back !== null, "a restored ranking is readable again");
+    check(back!.votes.length > 0, `a restored ranking keeps its votes, got ${back!.votes.length}`);
+    check(
+        (await q.getVisibility(alice, "alice-public")) === "public",
+        "a ranking that was public before deletion is public again after restoring"
+    );
+    check((await q.listDeletedTournaments(alice)).length === 0, "and it leaves the deleted list");
+
+    // Only "delete forever" actually destroys anything.
+    await q.softDeleteTournament(alice, "alice-private");
+    check((await q.purgeTournament(alice, "alice-private")) === true, "purging a deleted ranking succeeds");
+    check((await q.restoreTournament(alice, "alice-private")) === false, "a purged ranking cannot be restored");
+    check((await q.listDeletedTournaments(alice)).length === 0, "and it is gone from the deleted list too");
+
+    // Scoping: neither stage may be aimed at someone else's ranking.
+    check((await q.softDeleteTournament(bob, "alice-public")) === false, "you cannot delete someone else's ranking");
+    check((await q.purgeTournament(bob, "alice-public")) === false, "nor purge it");
+    check((await q.getTournament(alice, "alice-public")) !== null, "...and it is untouched after both attempts");
+    console.log("  invisible everywhere while deleted, unresurrectable by autosave, restored intact, scoped to its owner");
+}
 
 // --- deletion still cascades through the new tables ------------------------
 console.log("\nAccount deletion:");

@@ -144,15 +144,25 @@ export default function PrivacyPage() {
 
             <section className="mb-8">
                 <h2 className="mb-2 text-lg font-semibold">Deleting your data</h2>
+                <p className="mb-3 text-sm leading-relaxed text-fg-muted">
+                    Deleting a single ranking moves it to{" "}
+                    <strong className="text-fg">Recently deleted</strong> on your history page. It
+                    disappears from Browse, from your profile and from anyone&apos;s comparisons
+                    straight away, but we keep the row so you can restore it — a ranking can be
+                    hundreds or thousands of decisions, and one misclick should not be able to end
+                    that. &ldquo;Delete forever&rdquo;, in that same list, is the irreversible one,
+                    and asks you to confirm.
+                </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Go to{" "}
+                    To remove everything, go to{" "}
                     <Link href="/history" className="text-accent hover:underline">
                         History
                     </Link>{" "}
                     and choose <strong className="text-fg">Delete my account</strong>. That removes
                     your account row, every ranking you have saved (public ones included, which
                     disappear from Browse immediately) and everyone you follow, in one go and for
-                    good — we keep no backup copy to restore from, so please be sure. If someone has
+                    good, including anything sitting in Recently deleted — we keep no backup copy to restore
+                    from, so please be sure. If someone has
                     copied a public list of yours, their own ranking is their own and stays with
                     them; it carries none of your votes. If you have never signed
                     in, there is nothing to delete: clearing your browser data is enough.
