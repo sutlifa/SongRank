@@ -142,6 +142,15 @@ recording buried under karaoke versions and looking like "iTunes doesn't have it
 scripts/verify-resolve.ts asserts both, and its mock honours `limit` so the
 buried-track test actually bites.
 
+Search ACCUMULATES across a ladder of up to 3 terms (as typed → parentheticals
+stripped anywhere → trailing dash-suffix dropped), stopping once it has
+`ENOUGH_RESULTS` (5). It does not stop at the first non-empty query — that let
+one poor hit for an over-specific term block the broader search. Exact hits lead
+the list; `exactCount` and `broadenedTo` let the UI say "nothing matched exactly"
+vs "also showing". The 3-term cap is load-bearing: this path also backs the bulk
+paste matching pass, so an unbounded ladder would multiply a 200-song import into
+Apple's rate limiter.
+
 A non-2xx from Apple is NOT an empty result. 429/5xx/timeouts throw
 `UpstreamUnavailableError`, are retried (3 attempts, backoff, honours
 `Retry-After`), and if they never clear, `ResolveOutcome.unreachable` says so —

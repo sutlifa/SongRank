@@ -16,10 +16,12 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
     /** Whether the last search failed to reach Apple at all, as opposed to
      * reaching it and finding nothing -- see SearchOutcome in lib/itunes.ts. */
     const [unreachable, setUnreachable] = useState(false);
-    /** The term Apple actually answered, when a broadened one was needed --
-     * see searchSongs in lib/itunes.ts. Shown so a broadened search can never
-     * pass itself off as an exact one. */
-    const [usedTerm, setUsedTerm] = useState("");
+    /** The broader term that was also searched, when the exact one was sparse
+     * -- see SearchOutcome in lib/itunes.ts. Shown so a widened search can
+     * never pass itself off as an exact one. */
+    const [broadenedTo, setBroadenedTo] = useState<string | null>(null);
+    /** How many of the results came from the term as typed. */
+    const [exactCount, setExactCount] = useState(0);
     const [loading, setLoading] = useState(false);
     const [added, setAdded] = useState<Set<string>>(new Set());
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,13 +47,15 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                 if (requestId === requestIdRef.current) {
                     setResults(data.results ?? []);
                     setUnreachable(data.unreachable === true);
-                    setUsedTerm(typeof data.usedTerm === "string" ? data.usedTerm : "");
+                    setBroadenedTo(typeof data.broadenedTo === "string" ? data.broadenedTo : null);
+                    setExactCount(typeof data.exactCount === "number" ? data.exactCount : 0);
                 }
             } catch {
                 if (requestId === requestIdRef.current) {
                     setResults([]);
                     setUnreachable(true);
-                    setUsedTerm("");
+                    setBroadenedTo(null);
+                    setExactCount(0);
                 }
             } finally {
                 if (requestId === requestIdRef.current) setLoading(false);
@@ -65,7 +69,7 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
     const visibleResults = term.trim() ? results : [];
     const visibleLoading = term.trim() ? loading : false;
     const visibleUnreachable = term.trim() ? unreachable : false;
-    const broadened = term.trim() && usedTerm && usedTerm !== term.trim() ? usedTerm : null;
+    const broadened = term.trim() ? broadenedTo : null;
 
     function handleAdd(result: SearchResult) {
         const key = `${result.title}|${result.artist}`;
@@ -114,11 +118,23 @@ export default function SearchImportTab({ onAdd }: { onAdd: (songs: DraftSong[])
                 )
             )}
 
+            {/* Two different things to say, and conflating them would mislead
+                either way: nothing matched what you typed, versus a few did
+                and here is more besides. */}
             {!visibleLoading && broadened && visibleResults.length > 0 && (
                 <p className="mb-2 text-sm text-fg-muted">
-                    Nothing matched &ldquo;{term.trim()}&rdquo; exactly — showing results for{" "}
-                    <span className="font-medium text-fg">&ldquo;{broadened}&rdquo;</span>. Apple
-                    often lists a remix or version under a name you wouldn&apos;t guess.
+                    {exactCount === 0 ? (
+                        <>
+                            Nothing matched &ldquo;{term.trim()}&rdquo; exactly — showing results for{" "}
+                            <span className="font-medium text-fg">&ldquo;{broadened}&rdquo;</span>.
+                        </>
+                    ) : (
+                        <>
+                            Also showing results for{" "}
+                            <span className="font-medium text-fg">&ldquo;{broadened}&rdquo;</span>.
+                        </>
+                    )}{" "}
+                    Apple often lists a remix or version under a name you wouldn&apos;t guess.
                 </p>
             )}
 

@@ -213,13 +213,19 @@ async function rawSearch(term: string, limit: number): Promise<SearchResult[]> {
 }
 
 export interface SearchOutcome {
+    /** Exact-term hits first, then anything a broader term added. */
     results: SearchResult[];
+    /** The term as typed, trimmed. */
+    term: string;
     /**
-     * The term that actually produced these results, which is not always the
-     * one that was typed -- see `searchSongs`. The caller shows this when it
-     * differs, so a broadened search never passes itself off as an exact one.
+     * The broader term that was also searched, or null if the exact one was
+     * enough on its own. Shown by the caller so a widened search never passes
+     * itself off as an exact one.
      */
-    usedTerm: string;
+    broadenedTo: string | null;
+    /** How many of `results` came from the exact term. Lets the UI say
+     * "nothing matched exactly" versus "here's more" without guessing. */
+    exactCount: number;
     /**
      * True when Apple never answered -- a timeout, or a rate limit that
      * survived every retry. Same distinction as `ResolveOutcome.unreachable`
@@ -237,20 +243,59 @@ export interface SearchOutcome {
     unreachable: boolean;
 }
 
+/** Parenthesised or bracketed matter ANYWHERE, not just at the end -- "Song
+ * (Live) [Explicit]" and "Song (Remastered) - Single" both need this. */
+const PAREN_ANYWHERE_RE = /[([{][^)\]}]*[)\]}]/g;
+/** A trailing " - Slaughter Mix" / " – 2009 Remaster" style suffix. */
+const DASH_SUFFIX_RE = /\s+[-–—]\s+[^-–—]*$/;
+
 /**
- * Terms to try for one search box query, narrowest first.
+ * Terms to try for one search, narrowest first.
  *
- * Only one broadening step, and only the one that reliably helps: dropping a
- * parenthetical. Apple indexes a track under the exact title a label
- * submitted, so a remix or version suffix someone half-remembers ("Chicken
- * Huntin (Slaughter Mix)") frequently matches nothing at all while the base
- * title returns plenty -- including, often, the version they were after under
- * a name they would not have guessed.
+ * Apple indexes a track under the exact title its label submitted, so anything
+ * a person half-remembers -- a remix name, a version marker, an "(Explicit)"
+ * tag -- can match nothing at all while the base title returns plenty,
+ * including the recording they were actually after under a name they would
+ * never have guessed. The ladder strips the parts most likely to be wrong,
+ * in the order they are most likely to be wrong.
+ *
+ * Capped at three terms, and the caller stops early once it has enough. That
+ * bound is deliberate: this same code path backs the catalogue matching pass
+ * over a whole pasted list, so an unbounded ladder would multiply a 200-song
+ * import straight into Apple's rate limiter.
  */
 function searchFallbacks(term: string): string[] {
     const trimmed = term.trim();
-    const stripped = stripParenthetical(trimmed);
-    return Array.from(new Set([trimmed, stripped].filter(Boolean)));
+    const out = [trimmed];
+
+    const noParens = trimmed.replace(PAREN_ANYWHERE_RE, " ").replace(/\s+/g, " ").trim();
+    if (noParens && noParens !== trimmed) out.push(noParens);
+
+    // Only worth dropping a dash suffix if a usable query survives it -- "Cher
+    // - Believe" must not degrade to "Cher".
+    const base = noParens || trimmed;
+    const noDash = base.replace(DASH_SUFFIX_RE, "").trim();
+    if (noDash && noDash !== base && noDash.split(/\s+/).length >= 2) out.push(noDash);
+
+    return Array.from(new Set(out.filter(Boolean))).slice(0, 3);
+}
+
+/**
+ * Enough hits that broadening would add noise rather than help.
+ *
+ * The old rule was "stop at the first term that returns anything at all",
+ * which meant a single junk hit for an over-specific query blocked the
+ * broader search entirely -- you got one wrong answer instead of the right
+ * one plus some near misses. A handful is the point at which someone has
+ * something to choose between.
+ */
+const ENOUGH_RESULTS = 5;
+
+/** Same song twice across two queries, which is the normal case once the
+ * ladder broadens. Keyed on the iTunes id where there is one, and on the text
+ * otherwise, so a fixture or an id-less row still de-duplicates. */
+function resultKey(r: SearchResult): string {
+    return r.itunesId !== null ? `id:${r.itunesId}` : `t:${r.title.toLowerCase()}|${r.artist.toLowerCase()}`;
 }
 
 /**
@@ -269,21 +314,57 @@ function searchFallbacks(term: string): string[] {
  */
 export async function searchSongs(term: string, limit = 25): Promise<SearchOutcome> {
     const typed = term.trim();
-    if (!typed) return { results: [], unreachable: false, usedTerm: typed };
-    if (fixturesEnabled()) return { results: fixtureSearch(typed), unreachable: false, usedTerm: typed };
+    const empty = (unreachable = false): SearchOutcome => ({
+        results: [],
+        term: typed,
+        broadenedTo: null,
+        exactCount: 0,
+        unreachable,
+    });
+    if (!typed) return empty();
+    if (fixturesEnabled()) {
+        const results = fixtureSearch(typed);
+        return { results, term: typed, broadenedTo: null, exactCount: results.length, unreachable: false };
+    }
 
+    const seen = new Set<string>();
+    const results: SearchResult[] = [];
     let unreachable = false;
-    for (const q of searchFallbacks(typed)) {
+    let exactCount = 0;
+    let broadenedTo: string | null = null;
+
+    for (const [index, q] of searchFallbacks(typed).entries()) {
+        // Results ACCUMULATE rather than the first non-empty query winning.
+        // An over-specific query that returns one poor hit used to stop the
+        // ladder dead; now its hit stays at the top and the broader terms fill
+        // in underneath it.
+        if (results.length >= ENOUGH_RESULTS) break;
         try {
-            const results = await rawSearch(q, limit);
-            if (results.length > 0) return { results, unreachable: false, usedTerm: q };
+            const hits = await rawSearch(q, limit);
+            if (index > 0 && hits.length > 0 && broadenedTo === null) broadenedTo = q;
+            for (const hit of hits) {
+                const key = resultKey(hit);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                results.push(hit);
+            }
+            if (index === 0) exactCount = results.length;
         } catch (err) {
             // Remembered rather than swallowed, so an empty result at the end
             // can still say whether Apple ever answered.
             if (err instanceof UpstreamUnavailableError) unreachable = true;
         }
     }
-    return { results: [], unreachable, usedTerm: typed };
+
+    return {
+        results: results.slice(0, limit),
+        term: typed,
+        broadenedTo,
+        exactCount,
+        // Only meaningful when we came away with nothing: a partial outage
+        // that still produced results is not worth telling anyone about.
+        unreachable: results.length === 0 && unreachable,
+    };
 }
 
 // ---------------------------------------------------------------------------

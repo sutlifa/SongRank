@@ -527,13 +527,14 @@ async function runAsyncChecks() {
         try {
             const exact = await searchSongs("Chicken Huntin (Slaughter Mix)");
             check("search: a term Apple has nothing for is broadened rather than dead-ended", exact.results.length === 1);
-            check("search: ...and reports which term actually answered", exact.usedTerm === "Chicken Huntin");
+            check("search: ...and says which broader term found them", exact.broadenedTo === "Chicken Huntin");
+            check("search: ...and that the exact term itself found nothing", exact.exactCount === 0);
             check("search: the broadening is tried second, not instead", calls[0] === "Chicken Huntin (Slaughter Mix)");
 
             calls.length = 0;
             const direct = await searchSongs("Chicken Huntin");
-            check("search: a term that works is not broadened, and needs one request", calls.length === 1);
-            check("search: ...and reports the term as typed", direct.usedTerm === "Chicken Huntin");
+            check("search: a term that works is not broadened", direct.broadenedTo === null);
+            check("search: ...and its own hits are reported as exact", direct.exactCount === direct.results.length);
         } finally {
             globalThis.fetch = originalFetch;
         }
@@ -551,6 +552,96 @@ async function runAsyncChecks() {
         try {
             const outcome = await searchSongs("Absolutely Nothing Like This (Remix)");
             check("search: a real miss stays a miss", outcome.results.length === 0 && outcome.unreachable === false);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- The complaint that prompted all this: "the search has to be so
+    // specific". The old rule was "first query that returns ANYTHING wins",
+    // so one poor hit for an over-specific term blocked the broader search
+    // entirely -- you got a single wrong answer instead of the right one plus
+    // near misses. Results now accumulate.
+    {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const term = decodeURIComponent(
+                new URL(typeof input === "string" ? input : input.toString()).searchParams.get("term") ?? ""
+            );
+            const results =
+                term === "Chicken Huntin (Slaughter Mix)"
+                    ? [{ trackName: "Something Barely Related", artistName: "Nobody", trackId: 1 }]
+                    : term === "Chicken Huntin"
+                      ? [
+                            { trackName: 'Chickin "Pluckin" Huntin Remix', artistName: "Insane Clown Posse", trackId: 2 },
+                            { trackName: "Chicken Huntin'", artistName: "Murder City No Stars", trackId: 3 },
+                        ]
+                      : [];
+            return new Response(JSON.stringify({ results }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+        try {
+            const outcome = await searchSongs("Chicken Huntin (Slaughter Mix)");
+            check(
+                "search: one poor exact hit no longer blocks the broader search",
+                outcome.results.length === 3,
+                `got ${outcome.results.length}`
+            );
+            check("search: the exact hit still leads the list", outcome.results[0].artist === "Nobody");
+            check("search: ...and the real track is now reachable underneath it", outcome.results.some((r) => r.artist === "Insane Clown Posse"));
+            check("search: exactCount reports how many were exact", outcome.exactCount === 1);
+            check("search: and the broader term is named", outcome.broadenedTo === "Chicken Huntin");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- The same song arriving from two rungs of the ladder must appear once.
+    {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () =>
+            new Response(
+                JSON.stringify({
+                    results: [{ trackName: "Same Song", artistName: "Same Artist", trackId: 99 }],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+            )) as typeof fetch;
+        try {
+            const outcome = await searchSongs("Same Song (Remix)");
+            check("search: a song returned by two rungs is de-duplicated", outcome.results.length === 1);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    }
+
+    // -- A plentiful exact result must not spend extra requests. This bound
+    // is what keeps the ladder safe for the bulk paste path, which shares it.
+    {
+        const calls: string[] = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            calls.push(
+                decodeURIComponent(
+                    new URL(typeof input === "string" ? input : input.toString()).searchParams.get("term") ?? ""
+                )
+            );
+            return new Response(
+                JSON.stringify({
+                    results: Array.from({ length: 8 }, (_, i) => ({
+                        trackName: `Hit ${i}`,
+                        artistName: "Someone",
+                        trackId: i,
+                    })),
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+        }) as typeof fetch;
+        try {
+            const outcome = await searchSongs("Well Known Song (Live)");
+            check("search: a plentiful exact result costs exactly one request", calls.length === 1, `made ${calls.length}`);
+            check("search: ...and is not labelled as broadened", outcome.broadenedTo === null);
         } finally {
             globalThis.fetch = originalFetch;
         }
