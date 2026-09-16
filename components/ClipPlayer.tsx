@@ -70,6 +70,31 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     const windowStart = mode === "clip" ? clipStart : 0;
     const windowEnd = mode === "clip" ? clipEnd : duration;
 
+    // Reset when the source changes -- e.g. "Change version" swapping a song's
+    // recording underneath a mounted player.
+    //
+    // React updates the <audio> element's `src` attribute, but the element
+    // itself is not remounted, so it keeps everything about the previous file:
+    // its buffered data, its readyState, and (crucially) the duration this
+    // component measured off the old recording. Without an explicit `load()`
+    // the next play either replayed stale audio or sat there doing nothing,
+    // which is why a swapped song appeared to need a page refresh before it
+    // would play. Clearing the measured duration matters just as much: the clip
+    // window is derived from it, so carrying the old file's length over would
+    // seek the new one to the wrong place.
+    useEffect(() => {
+        const audio = audioRef.current;
+        setActualDuration(null);
+        setProgress(0);
+        setLoading(false);
+        setMode("clip");
+        if (!audio) return;
+        audio.pause();
+        // Only ask for a reload when there is something to load; calling load()
+        // with an empty src makes some browsers log a spurious error.
+        if (previewUrl) audio.load();
+    }, [previewUrl]);
+
     useImperativeHandle(ref, () => ({
         playClip: () => startPlayback("clip"),
         toggleClip: () => {
@@ -263,13 +288,6 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
                 />
             </div>
 
-            <button
-                type="button"
-                onClick={() => startPlayback(mode === "full" ? "clip" : "full")}
-                className="mt-2 text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
-            >
-                {mode === "full" ? `Back to the ${clipSeconds}s clip` : `Play full ${Math.round(duration)}s preview`}
-            </button>
         </div>
     );
 });

@@ -360,8 +360,54 @@ function pickNextMatchup(
  * sort since ES2019 and `ids` is always passed in the tournament's original
  * seed order -- so a tie resolves to seed order, deterministically, the same
  * final tiebreaker lib/swiss.ts uses. */
-function sortByRating(ids: string[], ratings: Map<string, RatingState>): string[] {
-    return [...ids].sort((a, b) => ratings.get(b)!.rating - ratings.get(a)!.rating);
+function sortByRating(
+    ids: string[],
+    ratings: Map<string, RatingState>,
+    tiebreak?: {
+        beat: Map<string, Set<string>>;
+        wins: Map<string, number>;
+        losses: Map<string, number>;
+    }
+): string[] {
+    // Seed order alone (the stable-sort behaviour described above) keeps ties
+    // deterministic, but deterministic is not the same as *right*: two songs
+    // on an identical rating could be listed against a comparison the user
+    // actually made. When the caller can supply the record -- which the final
+    // standings can -- ties fall through a real ladder instead:
+    //
+    //   1. rating          the engine's whole-field estimate
+    //   2. head to head    if these two were compared directly, that answer
+    //                      wins; no aggregate should overrule a judgement the
+    //                      user actually gave
+    //   3. wins, then fewest losses
+    //   4. lower RD        prefer the song the engine is more certain about
+    //   5. seed            so equal songs can never reshuffle between renders
+    //
+    // `beat` maps each song to everything it has defeated, making step 2 a set
+    // lookup rather than a rescan of the vote log.
+    const seed = new Map(ids.map((id, i) => [id, i]));
+    return [...ids].sort((a, b) => {
+        const ra = ratings.get(a)!;
+        const rb = ratings.get(b)!;
+        if (rb.rating !== ra.rating) return rb.rating - ra.rating;
+
+        if (tiebreak) {
+            if (tiebreak.beat.get(a)?.has(b)) return -1;
+            if (tiebreak.beat.get(b)?.has(a)) return 1;
+
+            const wa = tiebreak.wins.get(a) ?? 0;
+            const wb = tiebreak.wins.get(b) ?? 0;
+            if (wa !== wb) return wb - wa;
+
+            const la = tiebreak.losses.get(a) ?? 0;
+            const lb = tiebreak.losses.get(b) ?? 0;
+            if (la !== lb) return la - lb;
+
+            if (ra.rd !== rb.rd) return ra.rd - rb.rd;
+        }
+
+        return seed.get(a)! - seed.get(b)!;
+    });
 }
 
 /** Every unique pair among `ids`, in a fixed deterministic order. Used both
@@ -575,12 +621,16 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
     const idSet = new Set(ids);
     const wins = new Map<string, number>(ids.map((id) => [id, 0]));
     const losses = new Map<string, number>(ids.map((id) => [id, 0]));
+    // Everything each song has beaten, so the final ordering can break a tie on
+    // a direct comparison the user actually made rather than on aggregates.
+    const beat = new Map<string, Set<string>>(ids.map((id) => [id, new Set<string>()]));
     const played = new Set<string>();
 
     function applyDecided(winnerId: string, loserId: string): void {
         applyResult(ratings, winnerId, loserId);
         wins.set(winnerId, (wins.get(winnerId) ?? 0) + 1);
         losses.set(loserId, (losses.get(loserId) ?? 0) + 1);
+        beat.get(winnerId)?.add(loserId);
         played.add(pairKey(winnerId, loserId));
     }
 
@@ -732,7 +782,7 @@ export function deriveRanking(tournament: Tournament): RankingDerived {
 
     status = current ? "in_progress" : "complete";
 
-    const finalSorted = sortByRating(ids, ratings);
+    const finalSorted = sortByRating(ids, ratings, { beat, wins, losses });
     const confidence = confidenceOf(finalSorted, ratings);
 
     let orderedIds: string[];
