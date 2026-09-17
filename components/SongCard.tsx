@@ -20,12 +20,36 @@ interface Props {
     picked?: "winner" | "loser" | null;
     /** Wired to useTournamentLoader's `changeSongVersion` by the caller (see TournamentPlayer). */
     onChangeVersion: (version: SearchResult) => void;
+    /**
+     * Wired to useTournamentLoader's `refreshSongPreview`. Offered when a clip
+     * fails to play, because Apple moves its preview asset files and the stored
+     * link dies while the song, the catalogue entry and the ranking are all
+     * fine.
+     *
+     * This matters more here than on the results screen, where it landed first:
+     * a dead preview mid-ranking means being asked to vote on a song you cannot
+     * hear. It is NOT a version change -- it repairs the link to the same
+     * recording, so every vote already cast stays valid; see refreshSongPreview
+     * for the identity check that holds that line.
+     */
+    onRepairPreview: () => Promise<boolean>;
     disabled?: boolean;
     rematch?: boolean;
 }
 
 const SongCard = forwardRef<ClipPlayerHandle, Props>(function SongCard(
-    { song, side, clipSeconds, activeAudioRef, onVote, onChangeVersion, disabled, rematch, picked = null },
+    {
+        song,
+        side,
+        clipSeconds,
+        activeAudioRef,
+        onVote,
+        onChangeVersion,
+        onRepairPreview,
+        disabled,
+        rematch,
+        picked = null,
+    },
     ref
 ) {
     // `min-w-0` on the root because this is a grid item, and a grid item's
@@ -121,6 +145,7 @@ const SongCard = forwardRef<ClipPlayerHandle, Props>(function SongCard(
                 clipSeconds={clipSeconds}
                 activeAudioRef={activeAudioRef}
                 label={`Song ${side}`}
+                onRepairPreview={onRepairPreview}
             />
 
             {/* `mt-auto` is what actually fixes the misaligned buttons. The

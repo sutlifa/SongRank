@@ -27,7 +27,7 @@ const PICK_PAUSE_MS = 600;
 
 export default function TournamentPlayer({ id, authEnabled }: { id: string; authEnabled: boolean }) {
     const router = useRouter();
-    const { tournament, resolved, updateTournament, renameTournament, changeSongVersion, sync } = useTournamentLoader(
+    const { tournament, resolved, updateTournament, renameTournament, changeSongVersion, refreshSongPreview, sync } = useTournamentLoader(
         id,
         authEnabled
     );
@@ -345,6 +345,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             activeAudioRef={activeAudioRef}
                             onVote={() => choose(current, current.a)}
                             onChangeVersion={(version) => changeSongVersion(current.a, version)}
+                            onRepairPreview={() => refreshSongPreview(current.a)}
                             rematch={current.isRematch}
                             picked={pickedSide(current.a)}
                             disabled={Boolean(pick)}
@@ -358,6 +359,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                             activeAudioRef={activeAudioRef}
                             onVote={() => choose(current, current.b)}
                             onChangeVersion={(version) => changeSongVersion(current.b, version)}
+                            onRepairPreview={() => refreshSongPreview(current.b)}
                             rematch={current.isRematch}
                             picked={pickedSide(current.b)}
                             disabled={Boolean(pick)}
