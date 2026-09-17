@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { deriveTournament } from "@/lib/tournamentEngine";
+import { prepareSongQuery, songMatchesQuery } from "@/lib/songFilter";
 import SongArt from "./SongArt";
 import ClipPlayer from "./ClipPlayer";
 import ExportPanel from "./ExportPanel";
@@ -32,6 +33,18 @@ export default function ResultsView({
     const router = useRouter();
     const { tournament, resolved, sync, renameTournament, changeSongVersion } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+    /**
+     * The results filter. A finished ranking is a long ordered list -- a
+     * couple of hundred rows is ordinary -- and "where did my song end up"
+     * is the single most common thing anyone comes back to it for. Scrolling
+     * for it is the wrong answer when a text box is three lines of code.
+     *
+     * Deliberately filters rather than re-sorts or scroll-jumps: the rank
+     * numbers are the content of this page, so a match has to keep showing
+     * the one it actually earned (see `standing.rank` below, which comes off
+     * the full standings and is never recomputed from the filtered array).
+     */
+    const [query, setQuery] = useState("");
 
     const derived = useMemo(() => (tournament ? deriveTournament(tournament) : null), [tournament]);
 
@@ -76,6 +89,11 @@ export default function ResultsView({
     }
 
     const songById = new Map(tournament.songs.map((s) => [s.id, s]));
+
+    // See lib/songFilter.ts for what counts as a match, and why it is
+    // stricter than the catalogue search in lib/itunes.ts.
+    const preparedQuery = prepareSongQuery(query);
+    const visible = derived.standings.filter((standing) => songMatchesQuery(songById.get(standing.songId)!, preparedQuery));
     const ranked = derived.standings.map((s) => {
         const song = songById.get(s.songId)!;
         return { title: song.title, artist: song.artist };
@@ -103,8 +121,46 @@ export default function ResultsView({
                 <ExportPanel tournamentName={tournament.name} ranked={ranked} />
             </div>
 
+            {/* Below the export panel, directly above the list it filters --
+                a search box that floats away from its results reads as a
+                site-wide search, which this very much is not. */}
+            <div className="mb-4">
+                <label htmlFor="results-filter" className="sr-only">
+                    Find a song in this ranking
+                </label>
+                <div className="relative">
+                    <input
+                        id="results-filter"
+                        type="search"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Find a song…"
+                        className="input w-full pr-20"
+                        autoComplete="off"
+                    />
+                    {query.trim() !== "" && (
+                        <span
+                            className="pointer-events-none absolute inset-y-0 right-3 flex items-center font-mono text-xs tabular-nums text-fg-muted"
+                            aria-live="polite"
+                        >
+                            {visible.length}/{derived.standings.length}
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            {visible.length === 0 && (
+                <p className="card p-6 text-center text-sm text-fg-muted">
+                    No song in this ranking matches “{query.trim()}”.{" "}
+                    <button type="button" onClick={() => setQuery("")} className="underline underline-offset-2 hover:text-fg">
+                        Clear the search
+                    </button>{" "}
+                    to see all {derived.standings.length}.
+                </p>
+            )}
+
             <ol className="space-y-3">
-                {derived.standings.map((standing) => {
+                {visible.map((standing) => {
                     const song = songById.get(standing.songId)!;
                     const isChampion = song.id === derived.championId;
                     return (
@@ -140,6 +196,12 @@ export default function ResultsView({
                                             clipSeconds={tournament.clipSeconds}
                                             activeAudioRef={activeAudioRef}
                                             label={song.title}
+                                            // A player per row, and nothing on
+                                            // this screen is a comparison -- both
+                                            // halves of why levelling is wrong
+                                            // here. See `normalise` in
+                                            // ClipPlayer's Props.
+                                            normalise={false}
                                         />
                                     </div>
                                     {/* Results is explicitly one of the two
