@@ -79,9 +79,25 @@ export interface UnifiedDerived {
      * engine, which only ever affects rankings saved before the adaptive
      * engine existed. */
     supportsTies: boolean;
-    /** Fraction of the ranking confidently settled -- only ever non-null for
+    /**
+     * Fraction of the ranking confidently settled -- only ever non-null for
      * the adaptive engine, since Swiss has no uncertainty model to derive it
-     * from. The UI shows this as "ranking is N% settled" when present. */
+     * from.
+     *
+     * NOTHING RENDERS THIS TODAY. It was shown on the player as "ranking is
+     * N% settled" and withdrawn: it counts the fraction of ALL pairs whose
+     * order is provable beyond the uncertainty in their two ratings, which on
+     * a long list includes neighbours a few rating points apart where "these
+     * two are a coin flip" is the honest answer. So a ranking whose ORDER is
+     * about 97% right (the measured rank correlation, in
+     * scripts/verify-ranking.ts) advertised itself as 83% and read as "17% of
+     * this is wrong".
+     *
+     * Kept, rather than deleted, because the number itself is sound and
+     * tested -- it answers "how much of this is provable", which is a real
+     * question, just not one that belongs in a progress line. Anything
+     * surfacing it again needs to say what it means, not just print it.
+     */
     confidence: number | null;
 }
 

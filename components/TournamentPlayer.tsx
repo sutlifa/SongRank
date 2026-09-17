@@ -280,7 +280,7 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
      *
      * Everything about the MATCHUP reads from this -- the label, the cards,
      * the vote handlers -- so the frozen pair stays internally consistent.
-     * The progress bar and the settled percentage deliberately keep reading
+     * The progress bar and the matchup count deliberately keep reading
      * `derived`, because those describe the ranking rather than the pair, and
      * seeing them move is the confirmation that the vote landed.
      */
@@ -307,10 +307,23 @@ export default function TournamentPlayer({ id, authEnabled }: { id: string; auth
                     />
                 </div>
                 <p className="mt-1 text-xs text-fg-muted">
+                    {/* Matchups played, and nothing else.
+                        There used to be a "ranking is N% settled" figure
+                        here. It was accurate and it was read as the opposite
+                        of what it meant: it counts the fraction of ALL pairs
+                        whose order is provable beyond the uncertainty in
+                        their two ratings, which on a big list includes
+                        neighbours a handful of rating points apart, where
+                        "these two are a coin flip" is the true answer. So a
+                        ranking whose order is about 97% right (that is the
+                        measured rank correlation -- see the correlation
+                        section of scripts/verify-ranking.ts) advertised
+                        itself as 83%, and read as "17% of this is wrong".
+                        A number nobody can act on, that makes finished work
+                        look broken, is worse than no number. */}
                     {derived.matchupsPlayed} of{" "}
                     {derived.inPlayoffs ? `at least ${derived.matchupsPlanned}` : derived.matchupsPlanned}{" "}
                     matchups played
-                    {derived.confidence !== null && ` · ranking is ${Math.round(derived.confidence * 100)}% settled`}
                 </p>
             </header>
 
