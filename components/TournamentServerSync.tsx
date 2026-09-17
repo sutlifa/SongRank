@@ -27,11 +27,12 @@ import { tournamentFormat } from "@/lib/tournamentEngine";
  *      on the real answer -- a signed-out visitor on an auth-enabled
  *      deployment gets exactly the same "no persistence" treatment as one on
  *      a deployment with no auth at all.
- *   1. On first mount, if there's no local copy yet AND the visitor is signed
- *      in, try to fetch one from the server (they opened a /t/[id] link on a
- *      new device). A signed-out visitor skips straight to reporting
- *      resolved with whatever was already in memory -- never touching
- *      localStorage or the network.
+ *   1. On first mount, for a signed-in visitor, fetch the server's copy and
+ *      hydrate from whichever of it and this device's copy has MORE VOTES.
+ *      Not "local if present, server otherwise" -- see the comment on the
+ *      fetch below for the three hundred votes that cost. A signed-out
+ *      visitor skips straight to reporting resolved with whatever was
+ *      already in memory -- never touching localStorage or the network.
  *   2. On every change to `tournament` afterward, for a signed-in visitor
  *      only, PUT the current state to the server, debounced so a burst of
  *      undo/redo clicks doesn't fire one request per click.
@@ -79,48 +80,58 @@ export default function TournamentServerSync({
             return;
         }
 
-        if (tournament) {
-            // Already have an in-memory copy -- nothing to fetch, and it
-            // counts as "resolved" as far as the loading state goes.
-            //
-            // savedVoteCountRef is deliberately NOT set here. This copy came
-            // from this tab, not from the server, so it may well be ahead of
-            // what is stored -- most sharply when the player has just
-            // redirected here on the final vote, which is the one vote that
-            // completes a ranking. Marking it "saved" on that basis is what
-            // used to leave a finished ranking sitting in the database a vote
-            // short, or (after a fast burst of votes that outran the debounce)
-            // with no votes at all -- invisible to the owner, who sees their
-            // own correct copy locally, and wrong for everyone else the moment
-            // the ranking is public.
-            onServerResolved(tournament, true);
-            return;
-        }
+        // Whatever this device already has: the in-tab copy if there is one,
+        // otherwise its localStorage copy. Either may be ahead of the server
+        // (votes cast since the last successful save) or BEHIND it (this
+        // device last saw the ranking days ago and it was finished elsewhere).
+        const localCopy = tournament ?? loadLocalTournament(id);
 
-        // No in-memory copy yet: this device's local cache is checked before
-        // asking the server, same as before this feature existed -- unchanged
-        // behavior for a signed-in user, per the product decision.
-        const local = loadLocalTournament(id);
-        if (local) {
-            // Same reasoning as the in-memory path above: localStorage is
-            // written on every vote, so it is at least as fresh as the server
-            // and frequently fresher. Leaving the ref null lets job 2 push it
-            // up, which also repairs any divergence left by an earlier failed
-            // or missed save.
-            onServerResolved(local, true);
-            return;
-        }
-
+        // The server is asked EVEN WHEN we already have a copy, and this is
+        // the load-bearing part of the whole file.
+        //
+        // It used to return early here: a local copy was taken as the answer,
+        // reported resolved, and then pushed up by job 2 on the assumption
+        // that local is always at least as fresh as the server. That
+        // assumption is false in the one case that matters -- a browser
+        // holding an OLD copy of a ranking that has since been finished
+        // somewhere else -- and it cost a real ranking about three hundred
+        // votes: opening it loaded the stale local copy and the autosave
+        // wrote it straight over the finished one.
+        //
+        // So both copies are fetched and the FURTHER ONE WINS. The cost is
+        // that a signed-in visitor waits for one request before the ranking
+        // renders, where before it could come straight from memory. That is a
+        // few hundred milliseconds against the possibility of silently
+        // discarding somebody's afternoon, which is not a close call.
         fetch(`/api/tournaments/${id}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data: { tournament?: Tournament } | null) => {
-                // This one IS the server's state, so it is the one path that
-                // can honestly claim the two agree -- and doing so stops job 2
-                // from immediately PUTting straight back what we just read.
-                if (data?.tournament) savedVoteCountRef.current = data.tournament.votes.length;
-                onServerResolved(data?.tournament ?? null, true);
+                const remote = data?.tournament ?? null;
+                const localVotes = localCopy?.votes.length ?? -1;
+                const remoteVotes = remote?.votes.length ?? -1;
+
+                if (remote && remoteVotes >= localVotes) {
+                    // The server is level or ahead. Adopting it also means the
+                    // two genuinely agree, which is the only honest reason to
+                    // set this ref -- it stops job 2 from PUTting back exactly
+                    // what was just read.
+                    savedVoteCountRef.current = remoteVotes;
+                    onServerResolved(remote, true);
+                    return;
+                }
+                // Local is ahead (or the server has nothing). Leave the ref
+                // null so job 2 pushes this copy up, which is also what
+                // repairs a save that failed or was missed earlier.
+                onServerResolved(localCopy, true);
             })
-            .catch(() => onServerResolved(null, true));
+            .catch(() => {
+                // Offline, or the request failed. Use what this device has --
+                // the ranking must still be playable -- and leave the ref null
+                // so a save is attempted. If that save would discard votes,
+                // the server refuses it (see UNDO_SLACK in lib/queries.ts);
+                // this client is deliberately not the last line of defence.
+                onServerResolved(localCopy, true);
+            });
         // onServerResolved is a stable setState wrapper from the parent; the
         // resolvedRef guard is what actually prevents this from re-running.
         // eslint-disable-next-line react-hooks/exhaustive-deps

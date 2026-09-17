@@ -22,7 +22,40 @@ export interface SaveResult {
     inserted: boolean;
     /** The source ranking actually stored, after the public/undeleted check. */
     sourceTournamentId: string | null;
+    /**
+     * Set when the save was REFUSED because it would have thrown away votes
+     * the database already had -- see UNDO_SLACK. Carries what is stored, so
+     * the caller can tell the client how far behind it is instead of failing
+     * blind. `inserted` is false and nothing was written.
+     */
+    refused?: { storedVotes: number; incomingVotes: number };
 }
+
+/**
+ * How many votes a save is allowed to REMOVE from what the database already
+ * has for a ranking.
+ *
+ * Not zero, because undo is a real feature: `votes.slice(0, -1)` is exactly
+ * what it does (see lib/types.ts), so a legitimate save is sometimes one or
+ * two votes shorter than the last one. Small, because the disaster this
+ * exists to prevent is a device pushing a STALE copy over a fresher one --
+ * which is not a couple of votes, it is hundreds.
+ *
+ * This guard was written after a ranking lost roughly three hundred votes:
+ * a browser holding an old local copy opened the ranking, and the autosave
+ * pushed that copy over the finished one on the server. Nothing in the
+ * request looked wrong, which is the point -- a save that discards a third
+ * of someone's work should have to be more than an ordinary PUT, and until
+ * this clause existed it wasn't.
+ *
+ * Deliberately a count comparison and not a prefix check on the vote log.
+ * A prefix check is stricter and would also catch a stale copy that had
+ * DIVERGED at the same length, but it means comparing two jsonb arrays
+ * element-wise inside an ON CONFLICT predicate that runs on every autosave.
+ * The count catches the case that actually destroys work; if divergence at
+ * equal length ever turns out to matter, that is a separate, narrower fix.
+ */
+const UNDO_SLACK = 5;
 
 export interface TournamentSummary {
     id: string;
@@ -147,6 +180,13 @@ export async function saveTournament(args: {
           -- would wipe the attribution on the very next vote.
           updated_at = now()
         WHERE tournaments.user_id = ${args.userId} AND tournaments.deleted_at IS NULL
+          -- The vote-loss guard. An autosave may move a ranking FORWARD by any
+          -- amount, and backward only by an undo-sized step; see UNDO_SLACK.
+          -- It lives here, in the ON CONFLICT predicate, because this is the
+          -- single statement every save in the app goes through -- a check in
+          -- the route or the client is one someone can later add a second
+          -- caller around.
+          AND jsonb_array_length(EXCLUDED.votes) >= jsonb_array_length(tournaments.votes) - ${UNDO_SLACK}
         -- xmax = 0 is true only for a row this statement INSERTed; an UPDATE
         -- taken through ON CONFLICT leaves the id of the superseding
         -- transaction there instead. It is the standard way to tell the two
@@ -156,10 +196,29 @@ export async function saveTournament(args: {
         RETURNING (xmax = 0) AS inserted, source_tournament_id
     `;
 
-    // No row at all means the WHERE rejected the update: someone else's id, or
-    // a ranking sitting in the bin. Reported as "nothing happened" rather than
-    // guessed at.
+    // No row at all means the WHERE rejected the update. That is now three
+    // different things -- someone else's id, a ranking in the bin, or a save
+    // that would have discarded votes -- and the last one is worth telling
+    // the caller about specifically, so it asks.
     const row = rows[0];
+    if (!row) {
+        const [existing] = await sql<{ votes: number }[]>`
+            SELECT jsonb_array_length(votes) AS votes
+            FROM tournaments
+            WHERE id = ${args.id} AND user_id = ${args.userId} AND deleted_at IS NULL
+        `;
+        if (existing && args.votes.length < existing.votes - UNDO_SLACK) {
+            console.error(
+                `REFUSED SHRINKING SAVE: tournament ${args.id} has ${existing.votes} votes, ` +
+                    `save offered ${args.votes.length}`
+            );
+            return {
+                inserted: false,
+                sourceTournamentId: null,
+                refused: { storedVotes: existing.votes, incomingVotes: args.votes.length },
+            };
+        }
+    }
     return {
         inserted: row?.inserted === true,
         // The STORED source, not the requested one. The subselect above drops

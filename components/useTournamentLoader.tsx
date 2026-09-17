@@ -117,7 +117,17 @@ export function useTournamentLoader(
         signedInRef.current = signedIn;
         setResolved(true);
         if (remote) {
-            setTournament((prev) => prev ?? remote);
+            // `prev ?? remote` was wrong here, and quietly so. By the time this
+            // runs, TournamentServerSync has ALREADY compared this device's
+            // copy against the server's and handed back the further-along one
+            // (see its fetch), so preferring whatever happens to be in state
+            // is how a freshly-adopted server copy gets thrown away again.
+            //
+            // Still not an unconditional overwrite, though: a vote cast while
+            // that request was in flight would be in `prev` and in nothing
+            // else. Same rule as everywhere else in this path -- more votes
+            // wins, and a tie keeps what is already rendered.
+            setTournament((prev) => (prev && prev.votes.length >= remote.votes.length ? prev : remote));
             setSessionTournament(remote);
             // Only a signed-in user's copy is durable -- see this hook's
             // header. A guest is reported `resolved` with whatever was

@@ -75,6 +75,22 @@ export async function saveGuarded(userId: number, body: unknown): Promise<NextRe
         sourceTournamentId,
     });
 
+    // A save that would have discarded votes is reported as a conflict, not a
+    // success. 409 rather than 400: the request is well-formed and the client
+    // is not at fault -- it is simply behind, which is a state, not a mistake.
+    // The stored count rides along so the client can say how far behind, and
+    // so a human reading a network log can see what was protected.
+    if (saved.refused) {
+        return NextResponse.json(
+            {
+                error: "This device is behind — it has fewer picks than the saved copy, so nothing was overwritten.",
+                storedVotes: saved.refused.storedVotes,
+                incomingVotes: saved.refused.incomingVotes,
+            },
+            { status: 409 }
+        );
+    }
+
     // "Someone used your list", told once, when the copy is first created.
     //
     // Gated on `inserted` because this same function backs every autosave: the
