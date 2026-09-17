@@ -14,7 +14,7 @@ import { SessionProvider } from "next-auth/react";
  * fail quietly.
  *
  * Every component that reads the session (AuthButton, the tournament
- * player's server-sync, /history) is only ever *rendered* when `authEnabled`
+ * player's server-sync, /my-rankings) is only ever *rendered* when `authEnabled`
  * is true -- never conditionally calls the `useSession` hook itself -- so
  * they can assume this provider is present whenever they run. See
  * app/layout.tsx and components/AuthButton.tsx for the pattern.

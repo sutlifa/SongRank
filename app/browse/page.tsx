@@ -56,7 +56,7 @@ export default async function BrowsePage() {
                     {viewerId && (
                         <>
                             Your own public rankings aren&apos;t listed here; they&apos;re in{" "}
-                            <Link href="/history" className="text-accent underline underline-offset-2">
+                            <Link href="/my-rankings" className="text-accent underline underline-offset-2">
                                 your history
                             </Link>
                             .

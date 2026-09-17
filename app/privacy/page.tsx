@@ -165,7 +165,7 @@ export default function PrivacyPage() {
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
                     To remove everything, go to{" "}
-                    <Link href="/history" className="text-accent hover:underline">
+                    <Link href="/my-rankings" className="text-accent hover:underline">
                         History
                     </Link>{" "}
                     and choose <strong className="text-fg">Delete my account</strong>. That removes

@@ -7,7 +7,7 @@ import { signOut } from "next-auth/react";
 const CONFIRM_WORD = "DELETE";
 
 /**
- * Self-serve account deletion, on /history.
+ * Self-serve account deletion, on /my-rankings.
  *
  * Deliberately gated behind typing a word rather than a single click or a
  * browser `confirm()`. This is irreversible and it cascades: it takes every

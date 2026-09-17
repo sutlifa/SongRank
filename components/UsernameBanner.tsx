@@ -12,7 +12,7 @@ import { useSession } from "next-auth/react";
  * unlisted -- findable only by whoever already knows their display name or
  * their email address. That is not a state anyone opted into, and it is not
  * one they can discover: nothing about the app looks broken. A prompt only on
- * /history and /people reaches the people who happen to go there, which is
+ * /my-rankings and /people reaches the people who happen to go there, which is
  * exactly the wrong set (someone who never visits /people is the person least
  * likely to realise they are missing from it).
  *
@@ -102,7 +102,7 @@ export default function UsernameBanner() {
                     <span className="font-semibold text-accent">Pick a username</span> so friends can
                     find you — without either of you sharing an email address.
                 </p>
-                <Link href="/history" className="btn-secondary shrink-0 !px-3 !py-1 text-xs">
+                <Link href="/my-rankings" className="btn-secondary shrink-0 !px-3 !py-1 text-xs">
                     Choose one
                 </Link>
                 <button

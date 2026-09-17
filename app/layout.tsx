@@ -37,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <html lang="en">
             {/* Flex column with a growing <main> so the footer sits at the
                 bottom of the viewport on short pages (/signin, an empty
-                /history) instead of floating halfway up with blank space
+                /my-rankings) instead of floating halfway up with blank space
                 under it. `min-h-screen` alone only guarantees the body is
                 tall enough -- it says nothing about where the last child
                 lands inside it. */}

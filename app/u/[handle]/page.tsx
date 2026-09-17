@@ -76,7 +76,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
                 <p className="mb-8 rounded-lg border border-border bg-bg-soft-2 px-4 py-3 text-sm text-fg-muted">
                     This is how your profile looks to everyone else. Only rankings you&apos;ve made
                     public appear here —{" "}
-                    <Link href="/history" className="text-accent underline underline-offset-2">
+                    <Link href="/my-rankings" className="text-accent underline underline-offset-2">
                         manage them, and your username, in your history
                     </Link>
                     .

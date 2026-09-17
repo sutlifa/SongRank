@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { sql } from "./db";
 import type { Song, Vote, ClipSeconds, RankingDepth, TournamentFormat } from "./types";
+import { deriveTournament } from "./tournamentEngine";
 
 /**
  * Tournament persistence for signed-in users.
@@ -347,7 +348,7 @@ export async function listPublicTournamentsByUser(
  *
  * `viewerId` is excluded because Browse is for finding what other people are
  * doing. Your own rankings are already listed, with their controls, on
- * /history -- seeing them again filed under "everyone else" reads as a bug
+ * /my-rankings -- seeing them again filed under "everyone else" reads as a bug
  * every time, and it is the one section they could never correctly belong to.
  *
  * This is a per-viewer exclusion, not a property of the rows: your public
@@ -422,4 +423,73 @@ export async function getComparableTournament(
           AND t.deleted_at IS NULL
     `;
     return rows[0] ?? null;
+}
+
+/** One entry of a finished ranking's podium, as the rankings list shows it. */
+export interface TopCutEntry {
+    rank: number;
+    title: string;
+    artist: string;
+}
+
+/**
+ * The top few songs of each of `ids`, plus whether each one is genuinely
+ * finished.
+ *
+ * Standings are not stored anywhere -- they are derived by replaying the vote
+ * log (see lib/types.ts on why that is the design, not an oversight) -- so
+ * there is no cheaper way to learn a ranking's podium than to fetch its songs
+ * and votes and replay them. That is why this is a SECOND query rather than
+ * more columns on `listTournaments`: that one runs for up to 200 rankings and
+ * reads none of the jsonb, and it should stay that way. This one reads all of
+ * it, so the caller passes a short list of ids and nothing else pays for it.
+ *
+ * `complete` rides along because this function has already done the expensive
+ * part. For the ids it is given, the caller gets the REAL status rather than
+ * `looksComplete`'s estimate, and a ranking the estimate misjudged lands under
+ * the right heading anyway.
+ */
+export async function getTopCuts(
+    userId: number,
+    ids: string[],
+    size = 3
+): Promise<Map<string, { complete: boolean; top: TopCutEntry[] }>> {
+    const out = new Map<string, { complete: boolean; top: TopCutEntry[] }>();
+    if (ids.length === 0) return out;
+
+    const rows = await sql<
+        { id: string; format: TournamentFormat; depth: RankingDepth | null; songs: Song[]; votes: Vote[] }[]
+    >`
+        SELECT id, format, depth, songs, votes
+        FROM tournaments
+        WHERE user_id = ${userId} AND deleted_at IS NULL AND id = ANY(${ids})
+    `;
+
+    for (const row of rows) {
+        // Enough of a Tournament for the engines, which only ever read the
+        // fields below. The rest (name, timestamps, clip length) has no effect
+        // on standings, so it isn't fetched.
+        const derived = deriveTournament({
+            id: row.id,
+            name: "",
+            createdAt: "",
+            updatedAt: "",
+            clipSeconds: 30,
+            format: row.format,
+            depth: row.depth ?? undefined,
+            songs: row.songs,
+            votes: row.votes,
+        });
+        const byId = new Map(row.songs.map((s) => [s.id, s]));
+        out.set(row.id, {
+            complete: derived.status === "complete",
+            top: derived.standings.slice(0, size).flatMap((standing) => {
+                const song = byId.get(standing.songId);
+                // A standing whose song is missing from the list would mean a
+                // corrupted row; drop it rather than render "undefined".
+                return song ? [{ rank: standing.rank, title: song.title, artist: song.artist }] : [];
+            }),
+        });
+    }
+    return out;
 }

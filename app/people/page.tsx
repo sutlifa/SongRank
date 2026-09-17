@@ -42,7 +42,7 @@ export default async function PeoplePage() {
                     <p className="font-semibold text-accent">You don&apos;t have a username yet.</p>
                     <p className="mt-1 text-fg-muted">
                         Without one, friends can only find you by your display name.{" "}
-                        <Link href="/history" className="text-accent underline underline-offset-2">
+                        <Link href="/my-rankings" className="text-accent underline underline-offset-2">
                             Pick a username
                         </Link>{" "}
                         — it takes a second, and it means never having to hand out your email address.

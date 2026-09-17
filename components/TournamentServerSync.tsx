@@ -16,7 +16,7 @@ import { tournamentFormat } from "@/lib/tournamentEngine";
  * Three jobs, all silent on failure (a signed-out or offline signed-in user's
  * tournament is already safe in lib/sessionCache.ts's in-tab cache -- see
  * TournamentPlayer -- so nothing here is load-bearing for the tournament to
- * work, only for it to *also* persist and show up in /history):
+ * work, only for it to *also* persist and show up in /my-rankings):
  *
  *   0. Report whether this visitor is actually signed in, not just whether
  *      the deployment has auth configured -- `authEnabled` (the prop that

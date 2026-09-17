@@ -7,11 +7,15 @@ import AuthButton from "./AuthButton";
 import Logo from "./Logo";
 import NotificationBell from "./NotificationBell";
 
+// "My Rankings" is deliberately NOT in here. It is reached through the
+// profile tab at the end of the nav (see AuthButton), because it is the one
+// destination that is about you rather than about the site -- and because
+// listing it twice, once as a nav link and once as your own avatar, made the
+// avatar look like decoration.
 const LINKS = [
     { href: "/browse", label: "Browse" },
     { href: "/starters", label: "Ready-Made Lists" },
     { href: "/new", label: "Create New Ranking" },
-    { href: "/history", label: "History" },
 ];
 
 export default function SiteHeader({ authEnabled }: { authEnabled: boolean }) {

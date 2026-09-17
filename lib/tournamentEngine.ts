@@ -23,7 +23,8 @@ import {
     describePlan as describeSwissPlan,
     MAX_SONGS,
 } from "./swiss";
-import { deriveRanking, recordRankingVote, undoLastRankingVote, describeRankingPlan } from "./ranking";
+import { deriveRanking, recordRankingVote, undoLastRankingVote, describeRankingPlan, estimateMatchups } from "./ranking";
+import { plannedRounds, matchupsInRound } from "./swiss";
 import type { RankingDepth } from "./types";
 import type { Tournament, TournamentFormat } from "./types";
 
@@ -183,4 +184,41 @@ export function undoLastVote(t: Tournament): Tournament {
  * `depth` is ignored for "swiss" (Swiss has no depth concept). */
 export function describePlan(n: number, format: TournamentFormat, depth: RankingDepth): string {
     return format === "adaptive" ? describeRankingPlan(n, depth) : describeSwissPlan(n);
+}
+
+/**
+ * A rough "looks finished" guess from a tournament's COUNTS alone -- no song
+ * list, no vote log, nothing that has to come out of a jsonb column.
+ *
+ * That constraint is the whole reason it exists. The rankings list shows
+ * dozens of entries and needs to sort them into finished and in-progress;
+ * asking each one's real status means replaying its vote log, which means
+ * fetching every vote of every ranking to draw one page. This decides from
+ * four integers the list already has.
+ *
+ * Never load-bearing. Being wrong costs a ranking appearing under the wrong
+ * heading until it is opened, and both the player and the results screen
+ * re-derive the true status from the vote log the moment they load. Where a
+ * caller has the real thing (see `getTopCuts` in lib/queries.ts, which has to
+ * derive anyway), it should prefer it and use this only for the rest.
+ *
+ * The two engines need very different thresholds: Swiss finishes in roughly
+ * `plannedRounds * matchupsInRound` votes, while an adaptive tournament's
+ * main phase alone targets `~1.25 * n * log2(n)` at Thorough -- an order of
+ * magnitude more for a large field. Using the Swiss estimate for both (as the
+ * history list did, back when Swiss was the only engine) called a
+ * barely-started adaptive tournament finished as soon as it reached n - 1
+ * votes.
+ */
+export function looksComplete(t: {
+    songs: number;
+    votes: number;
+    format?: TournamentFormat;
+    depth?: RankingDepth | null;
+}): boolean {
+    if (t.songs <= 1) return true;
+    if ((t.format ?? "swiss") === "adaptive") {
+        return t.votes >= estimateMatchups(t.songs, t.depth ?? "thorough");
+    }
+    return t.votes >= plannedRounds(t.songs) * matchupsInRound(t.songs);
 }
