@@ -12,10 +12,15 @@ import ClipPlayer from "./ClipPlayer";
  * already cast against it stays valid. See lib/songVersion.ts for the swap
  * itself and the invariant it rests on.
  *
- * Self-contained: owns its own open/closed and search state, so both call
- * sites (SongCard on the matchup screen, ResultsView on the results screen)
- * just render `<ChangeVersionControl ... />` and hand it an `onPick`
- * callback -- neither needs to know anything about search debouncing or the
+ * Only reachable WHILE a ranking is being played (SongCard, on the matchup
+ * screen). It used to be on the results screen too, on the reasoning that
+ * reviewing the final list is when a bad recording gets noticed; see
+ * ResultsView's header for why a finished ranking now locks its recordings
+ * instead. Nothing here assumes one call site or two.
+ *
+ * Self-contained: owns its own open/closed and search state, so a call site
+ * just renders `<ChangeVersionControl ... />` and hands it an `onPick`
+ * callback -- it needs to know nothing about search debouncing or the
  * panel's chrome. Reuses ClipPlayer for audition rather than reimplementing
  * playback, and takes the *same* `activeAudioRef` the caller already passes
  * to its own ClipPlayer(s), so opening this and playing a candidate stops

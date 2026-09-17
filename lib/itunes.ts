@@ -37,6 +37,7 @@ import { fixtureSearch, fixtureResolve } from "./fixtures.ts";
 // drift apart. MatchConfidence is a type-only import: lib/parse.ts never
 // imports this file, so pulling its type in here creates no cycle.
 import { normalizeForMatch, type MatchConfidence } from "./parse.ts";
+import { someWordMatches } from "./fuzzy.ts";
 
 /** See the top of this file and lib/fixtures.ts for why this switch exists. */
 function fixturesEnabled(): boolean {
@@ -496,9 +497,24 @@ function tokens(s: string): string[] {
     return normalized.split(" ").filter((t) => t.length > 0 && !STOPWORDS.has(t));
 }
 
+/**
+ * What fraction of `needle`'s words are present in `haystack`, counting a
+ * near-miss as present -- see lib/fuzzy.ts for how near, and for the
+ * "Chicken Huntin'" / "Chickin 'Pluckin' Huntin Remix" case that made exact
+ * equality untenable here.
+ *
+ * Note where the tolerance is and is not: this decides whether a candidate
+ * ALREADY RETURNED by the catalogue is a good enough match to offer. It
+ * cannot summon a result Apple didn't send, and it is not used by the
+ * results-page filter, which has different incentives entirely
+ * (lib/songFilter.ts says why).
+ */
 function coverage(needle: string[], haystack: Set<string>): number {
     if (needle.length === 0) return 0;
-    return needle.filter((t) => haystack.has(t)).length / needle.length;
+    // A Set was the right shape when this was an equality test and is kept
+    // because callers build it once for several coverage() calls; the scan
+    // below is over at most a handful of words either way.
+    return needle.filter((t) => someWordMatches(t, haystack)).length / needle.length;
 }
 
 /**

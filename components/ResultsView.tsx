@@ -9,11 +9,24 @@ import SongArt from "./SongArt";
 import ClipPlayer from "./ClipPlayer";
 import ExportPanel from "./ExportPanel";
 import EditableTournamentName from "./EditableTournamentName";
-import ChangeVersionControl from "./ChangeVersionControl";
 import { useTournamentLoader } from "./useTournamentLoader";
 import VisibilityToggle from "./VisibilityToggle";
 import type { Visibility } from "@/lib/queries";
 
+/**
+ * The finished ranking.
+ *
+ * Note what is deliberately NOT here: the "Change version" panel, which this
+ * screen used to carry on the reasoning that reviewing the final list is
+ * exactly when a bad recording gets noticed. True, and beside the point --
+ * a finished ranking is a record of what somebody actually listened to. Every
+ * one of those matchups was decided against a specific recording, so swapping
+ * one in afterwards silently rewrites the question those votes answered: the
+ * standings would still say this version beat that one nine times, about a
+ * version nobody heard. The recording is fixed at the moment the ranking
+ * completes, and the place to fix a bad one is while it is still being played
+ * (see SongCard, which still has the panel) or in a new ranking.
+ */
 export default function ResultsView({
     id,
     authEnabled,
@@ -31,7 +44,7 @@ export default function ResultsView({
     visibility?: Visibility | null;
 }) {
     const router = useRouter();
-    const { tournament, resolved, sync, renameTournament, changeSongVersion } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, sync, renameTournament } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
     /**
      * The results filter. A finished ranking is a long ordered list -- a
@@ -204,17 +217,6 @@ export default function ResultsView({
                                             normalise={false}
                                         />
                                     </div>
-                                    {/* Results is explicitly one of the two
-                                        places this belongs (AGENT-TEAM.md
-                                        brief): reviewing the final list is
-                                        exactly when a bad recording gets
-                                        noticed. */}
-                                    <ChangeVersionControl
-                                        song={song}
-                                        clipSeconds={tournament.clipSeconds}
-                                        activeAudioRef={activeAudioRef}
-                                        onPick={(version) => changeSongVersion(song.id, version)}
-                                    />
                                 </div>
                             </div>
                         </li>
