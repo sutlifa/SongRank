@@ -1,0 +1,191 @@
+// scripts/verify-spotify.ts
+//
+// Proof that the Spotify export picks the right recording, run with:
+//
+//     node --experimental-strip-types scripts/verify-spotify.ts
+//
+// This is the half of lib/spotify.ts that can be tested at all: this sandbox's
+// proxy blocks api.spotify.com exactly as it blocks itunes.apple.com, so the
+// HTTP is exercised only by a first real run. Everything that can be wrong in
+// an interesting way is pure and is checked here against a fake catalogue.
+//
+// Why it matters more than it looks: a wrong match does not fail. It lands a
+// karaoke version, or a cover, or the live recording in somebody's playlist,
+// and the playlist looks completely normal. That silent-wrongness is the exact
+// reason the old Spotify import was removed rather than fixed, and it is the
+// failure this file exists to make loud.
+
+import {
+    searchQueries,
+    toTrack,
+    pickBest,
+    isConfident,
+    versionMismatch,
+    batchUris,
+    matchOne,
+    matchTracks,
+    MAX_URIS_PER_REQUEST,
+    type SpotifyTrack,
+} from "../lib/spotify.ts";
+
+let checks = 0;
+const failures: string[] = [];
+function check(label: string, actual: unknown, expected: unknown): void {
+    checks += 1;
+    const a = JSON.stringify(actual);
+    const e = JSON.stringify(expected);
+    if (a !== e) failures.push(`${label}\n    expected ${e}\n    actual   ${a}`);
+}
+
+// --- phrasing the query ---------------------------------------------------
+check("both filters first", searchQueries("Let It Go", "Idina Menzel")[0], 'track:"Let It Go" artist:"Idina Menzel"');
+check("then title alone", searchQueries("Let It Go", "Idina Menzel")[1], 'track:"Let It Go"');
+check("then plain text", searchQueries("Let It Go", "Idina Menzel")[2], "Let It Go Idina Menzel");
+// A quote in a title must not break out of its own field filter and turn the
+// rest of the query into syntax.
+check("quotes are stripped", searchQueries('Don"t Stop', "Queen")[0], 'track:"Don t Stop" artist:"Queen"');
+check("apostrophes too", searchQueries("Don't Stop Me Now", "Queen")[0], 'track:"Don t Stop Me Now" artist:"Queen"');
+// No artist: the title filter and the plain query would be the same string,
+// and asking a rate-limited endpoint the same question twice is waste.
+check("no artist yields no duplicate rungs", searchQueries("Let It Go", ""), ['track:"Let It Go"', "Let It Go"]);
+check("nothing to search for", searchQueries("", ""), []);
+
+// --- reading the response -------------------------------------------------
+const raw = {
+    id: "t1",
+    uri: "spotify:track:t1",
+    name: "Let It Go",
+    explicit: false,
+    duration_ms: 225_000,
+    album: { name: "Frozen" },
+    artists: [{ name: "Idina Menzel" }],
+};
+check("a usable hit is flattened", toTrack(raw)?.uri, "spotify:track:t1");
+check("album carried", toTrack(raw)?.album, "Frozen");
+check("multiple artists joined", toTrack({ ...raw, artists: [{ name: "A" }, { name: "B" }] })?.artist, "A, B");
+check("missing artists is empty, not a crash", toTrack({ ...raw, artists: undefined })?.artist, "");
+// No uri means it cannot go in a playlist, so it must not survive as a
+// half-filled object to be discovered later somewhere less able to say so.
+check("no uri is dropped", toTrack({ ...raw, uri: undefined }), null);
+check("no id is dropped", toTrack({ ...raw, id: undefined }), null);
+check("no name is dropped", toTrack({ ...raw, name: undefined }), null);
+
+// --- choosing a candidate -------------------------------------------------
+const track = (id: string, title: string, artist: string): SpotifyTrack => ({
+    id, uri: `spotify:track:${id}`, title, artist, album: null, durationMs: null, explicit: false,
+});
+const target = { title: "Be Prepared", artist: "Jeremy Irons" };
+
+check("exact match wins", pickBest(target, [track("a", "Be Prepared", "Jeremy Irons")]).confidence, "high");
+check("nothing usable", pickBest(target, [track("a", "Hakuna Matata", "Nathan Lane")]).confidence, "none");
+check("empty candidate list", pickBest(target, []).match, null);
+
+// Relevance order breaks ties, because it is better information than anything
+// this code could invent: two recordings can be textually identical.
+const dupes = [track("first", "Be Prepared", "Jeremy Irons"), track("second", "Be Prepared", "Jeremy Irons")];
+check("first of equal matches wins", pickBest(target, dupes).match?.id, "first");
+
+// The buried studio version: a run of poor candidates must not stop the good
+// one further down being found.
+const buried = [
+    track("x1", "Hakuna Matata", "Nathan Lane"),
+    track("x2", "Circle of Life", "Carmen Twillie"),
+    track("x3", "Be Prepared", "Jeremy Irons"),
+];
+check("a good match buried behind bad ones is still found", pickBest(target, buried).match?.id, "x3");
+
+// --- only "high" ships unattended ----------------------------------------
+check("high is confident", isConfident("high"), true);
+check("partial is NOT confident", isConfident("partial"), false);
+check("none is not confident", isConfident("none"), false);
+
+// --- the version trap -----------------------------------------------------
+// Same title, same credited artist, completely different recording. Every
+// text measure scores this "high", which is precisely why it needs flagging
+// separately rather than being left to the scorer.
+check("karaoke flagged", versionMismatch({ title: "Be Prepared" }, { title: "Be Prepared (Karaoke Version)" }), true);
+check("live flagged", versionMismatch({ title: "Bohemian Rhapsody" }, { title: "Bohemian Rhapsody - Live Aid" }), true);
+check("remix flagged", versionMismatch({ title: "Chicken Huntin'" }, { title: "Chicken Huntin' (Slaughter Remix)" }), true);
+// ...but not when the ranking ASKED for that version.
+check("asked for the remix", versionMismatch({ title: "Chicken Huntin' (Slaughter Mix)" }, { title: "Chicken Huntin' (Slaughter Mix)" }), false);
+check("asked for live", versionMismatch({ title: "Bohemian Rhapsody - Live" }, { title: "Bohemian Rhapsody - Live Aid" }), false);
+check("ordinary track not flagged", versionMismatch({ title: "Let It Go" }, { title: "Let It Go" }), false);
+
+// --- batching -------------------------------------------------------------
+const uris = Array.from({ length: 250 }, (_, i) => `spotify:track:${i}`);
+check("batch count", batchUris(uris).length, 3);
+check("batch sizes", batchUris(uris).map((b) => b.length), [100, 100, 50]);
+check("order is preserved across batches", batchUris(uris).flat(), uris);
+check("exactly one full batch is one batch", batchUris(uris.slice(0, 100)).length, 1);
+check("empty input", batchUris([]), []);
+check("the limit is Spotify's", MAX_URIS_PER_REQUEST, 100);
+
+// --- the ladder, end to end against a fake catalogue ----------------------
+const CATALOGUE: SpotifyTrack[] = [
+    track("s1", "Be Prepared", "Jeremy Irons, Whoopi Goldberg, Cheech Marin & Jim Cummings"),
+    track("s2", "Let It Go", "Idina Menzel"),
+    track("s3", "Chickin \"Pluckin\" Huntin Remix", "Insane Clown Posse"),
+];
+/** A deliberately literal stand-in: it honours field filters the way Spotify
+ * does, so a rung that would return nothing really does return nothing. */
+const queried: string[] = [];
+const fakeSearch = async (query: string) => {
+    queried.push(query);
+    const filters = [...query.matchAll(/(track|artist):"([^"]+)"/g)];
+    if (filters.length > 0) {
+        return CATALOGUE.filter((t) =>
+            filters.every(([, field, value]) => {
+                const hay = (field === "track" ? t.title : t.artist).toLowerCase();
+                return hay.includes(value.toLowerCase());
+            })
+        );
+    }
+    const words = query.toLowerCase().split(" ").filter(Boolean);
+    return CATALOGUE.filter((t) => words.some((w) => `${t.title} ${t.artist}`.toLowerCase().includes(w)));
+};
+
+queried.length = 0;
+const clean = await matchOne({ title: "Let It Go", artist: "Idina Menzel" }, fakeSearch);
+check("a clean song matches", clean.match?.id, "s2");
+check("...on the first rung, without further queries", queried.length, 1);
+
+// The long-soundtrack-credit case rung 2 exists for: our artist string is the
+// full credit, Spotify files it the same way here, but the first rung is the
+// one that should answer.
+queried.length = 0;
+const longCredit = await matchOne(
+    { title: "Be Prepared", artist: "Jeremy Irons, Whoopi Goldberg, Cheech Marin & Jim Cummings" },
+    fakeSearch
+);
+check("long credit matches", longCredit.match?.id, "s1");
+
+// A song Spotify simply does not have must come back as a clean miss, not as
+// the nearest thing on the shelf.
+queried.length = 0;
+const missing = await matchOne({ title: "Thunderstruck", artist: "AC/DC" }, fakeSearch);
+check("a genuine absence is a miss", missing.match, null);
+check("...and is reported as none", missing.confidence, "none");
+check("...after trying every rung", queried.length >= 2, true);
+
+// The whole ranking, in order, with the misses kept in place rather than
+// silently dropped -- the review screen has to show what did NOT match.
+const all = await matchTracks(
+    [
+        { title: "Let It Go", artist: "Idina Menzel" },
+        { title: "Thunderstruck", artist: "AC/DC" },
+        { title: "Be Prepared", artist: "Jeremy Irons" },
+    ],
+    fakeSearch
+);
+check("every song is accounted for", all.length, 3);
+check("ranks are 1-based and in order", all.map((m) => m.rank), [1, 2, 3]);
+check("the miss is kept, not dropped", all[1].match, null);
+check("matches carry their uri", all[2].match?.uri, "spotify:track:s1");
+
+if (failures.length > 0) {
+    console.error(`\n${failures.length} of ${checks} checks FAILED:\n`);
+    for (const f of failures) console.error(`  ${f}\n`);
+    process.exit(1);
+}
+console.log(`\n${checks}/${checks} checks passed.`);
+console.log("Queries are escaped, misses stay misses, order survives batching, and only a confident match ships.");

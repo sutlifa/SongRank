@@ -54,7 +54,7 @@ jobs:
       - name: Offline verify suites
         run: |
           set -e
-          for s in ranking legacy swiss parse resolve starters compare username filter fuzzy; do
+          for s in ranking legacy swiss parse resolve starters compare username filter fuzzy spotify; do
             echo "::group::verify-$s"
             node --experimental-strip-types --import ./scripts/register-ts.mjs "scripts/verify-$s.ts"
             echo "::endgroup::"
