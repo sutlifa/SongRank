@@ -55,6 +55,14 @@ interface Props {
      *     comment in startPlayback describes what it looked like.
      */
     normalise?: boolean;
+    /**
+     * Asks the caller to fetch a fresh preview URL for this song, when the
+     * stored one turns out to be dead. Resolves true if it found one.
+     *
+     * Optional, and offered to the listener as a button rather than run
+     * automatically: see the retry UI below for why the difference matters.
+     */
+    onRepairPreview?: () => Promise<boolean>;
 }
 
 /** Seconds as m:ss, for the elapsed/total readout beside the progress bar. */
@@ -79,7 +87,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // `clipSeconds` and `previewSeconds` both stay in Props so callers and
     // saved rankings keep round-tripping them, but neither affects playback any
     // more -- see the window and duration comments below.
-    { previewUrl, previewNote, activeAudioRef, label, normalise = true },
+    { previewUrl, previewNote, activeAudioRef, label, normalise = true, onRepairPreview },
     ref
 ) {
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -102,6 +110,8 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
      * and offers the retry that sometimes fixes it.
      */
     const [failed, setFailed] = useState(false);
+    /** "looking" while a repair is in flight, "gave-up" when it found nothing. */
+    const [repair, setRepair] = useState<"idle" | "looking" | "gave-up">("idle");
 
     // The real duration, read off the audio element once its metadata loads.
     // The only trustworthy source there is -- see the `duration` comment below
@@ -144,13 +154,6 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     const windowStart = 0;
     const windowEnd = duration;
 
-    /**
-     * The source this player has already been reset for, so the effect below
-     * can tell a genuine source CHANGE from its own first run. See that
-     * effect for why the difference is worth a ref.
-     */
-    const loadedUrlRef = useRef<string | null>(null);
-
     // Reset when the source changes -- e.g. "Change version" swapping a song's
     // recording underneath a mounted player.
     //
@@ -164,33 +167,33 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
     // window is derived from it, so carrying the old file's length over would
     // seek the new one to the wrong place.
     //
-    // The `load()` is skipped on the effect's FIRST run, though, because there
-    // is nothing to reset then: the element was just created with this exact
-    // src and has no previous file to forget. That used to fire regardless,
-    // which is invisible on a screen with two players and not at all invisible
-    // on the results list, which renders one per row. `load()` runs the
-    // resource-selection algorithm, and a browser allocates a media player to
-    // run it -- so opening a sixty-song ranking instantiated sixty of them for
-    // no reason. Browsers cap that number (mobile Safari far more tightly than
-    // desktop), and past the cap play() simply fails, which is the shape of
-    // "the clips don't work on the results page". preload="none" means the
-    // first real play() still loads the file itself, so nothing is lost.
+    // This load() briefly did NOT run on the effect's first pass, on the
+    // theory that a fresh element has nothing to reset and that skipping it
+    // would stop a long results list from instantiating a media player per
+    // row. It was reverted: it was speculative -- aimed at a browser
+    // media-player cap that was never confirmed to be the problem -- and it
+    // was followed immediately by reports of clips failing to load on every
+    // matchup after the first, which is precisely the shape of an element
+    // that was never told to go and get its source. The real cause of the
+    // clip failures turned out to be dead preview URLs (see
+    // refreshSongPreview in useTournamentLoader), which this never addressed.
+    // A redundant load() costs nothing anyone has measured; not loading cost
+    // somebody their clips.
     useEffect(() => {
         const audio = audioRef.current;
         setActualDuration(null);
         setProgress(0);
         setLoading(false);
         setFailed(false);
+        setRepair("idle");
         gainRef.current = 1;
         measuredRef.current = false;
-        const isSourceChange = loadedUrlRef.current !== null && loadedUrlRef.current !== previewUrl;
-        loadedUrlRef.current = previewUrl;
         if (audio) {
             audio.volume = 1;
             audio.pause();
             // Only ask for a reload when there is something to load; calling
             // load() with an empty src makes some browsers log a spurious error.
-            if (previewUrl && isSourceChange) audio.load();
+            if (previewUrl) audio.load();
         }
     }, [previewUrl]);
 
@@ -311,8 +314,15 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
             }
         };
 
+        // Seek unless we are genuinely picking up mid-clip. Resuming is the
+        // ONLY case that skips it -- an element sitting at 0:00 is seeked to
+        // 0:00, which is a no-op for position but is also the nudge this
+        // component has always given a media element before playing it, and
+        // removing it from the fresh-element path (as the first version of
+        // resume did) is not a change worth making blind.
+        const resuming = !fromStart && audio.currentTime > 0;
         if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
-            if (fromStart) seekToStart();
+            if (!resuming) seekToStart();
         } else {
             setLoading(true);
             const onReady = (event: Event) => {
@@ -334,7 +344,7 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
                 if (activeAudioRef.current !== audio) return;
                 // Nothing to seek on a resume -- the element is already sitting
                 // where the last pause left it.
-                if (fromStart) seekToStart();
+                if (!resuming) seekToStart();
             };
             audio.addEventListener("loadedmetadata", onReady);
             audio.addEventListener("error", onReady);
@@ -473,9 +483,49 @@ const ClipPlayer = forwardRef<ClipPlayerHandle, Props>(function ClipPlayer(
                 cue is a line of text appearing under a button that otherwise
                 looks exactly as it did before the click. */}
             {failed && (
-                <p className="mt-1.5 text-xs text-fg-muted" role="status" aria-live="polite">
-                    Couldn&apos;t play this clip. Press play to try again.
-                </p>
+                <div className="mt-1.5 text-xs text-fg-muted" role="status" aria-live="polite">
+                    {repair === "gave-up" ? (
+                        <span>
+                            Couldn&apos;t play this clip, and Apple doesn&apos;t have another copy of this exact
+                            recording. The song still counts — it just can&apos;t be previewed.
+                        </span>
+                    ) : (
+                        <span>
+                            Couldn&apos;t play this clip. Press play to try again
+                            {onRepairPreview ? (
+                                <>
+                                    , or{" "}
+                                    {/* Offered, not automatic. Apple moves preview
+                                        files, so the stored link dies while the song
+                                        is fine -- but repairing it writes to the
+                                        ranking, and a finished ranking is something
+                                        this app has just promised not to rewrite
+                                        behind your back (see ResultsView). A button
+                                        keeps the promise and still fixes it in one
+                                        click. */}
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            setRepair("looking");
+                                            const found = await onRepairPreview();
+                                            // On success the new src arrives as a
+                                            // prop change, and the reset effect
+                                            // above clears `failed` and `repair`
+                                            // on its own -- so there is nothing to
+                                            // set here but the failure case.
+                                            if (!found) setRepair("gave-up");
+                                        }}
+                                        disabled={repair === "looking"}
+                                        className="underline underline-offset-2 hover:text-fg disabled:no-underline"
+                                    >
+                                        {repair === "looking" ? "looking…" : "look for it again"}
+                                    </button>
+                                </>
+                            ) : null}
+                            .
+                        </span>
+                    )}
+                </div>
             )}
         </div>
     );

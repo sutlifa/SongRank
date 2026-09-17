@@ -44,7 +44,7 @@ export default function ResultsView({
     visibility?: Visibility | null;
 }) {
     const router = useRouter();
-    const { tournament, resolved, sync, renameTournament } = useTournamentLoader(id, authEnabled);
+    const { tournament, resolved, sync, renameTournament, refreshSongPreview } = useTournamentLoader(id, authEnabled);
     const activeAudioRef = useRef<HTMLAudioElement | null>(null);
     /**
      * The results filter. A finished ranking is a long ordered list -- a
@@ -215,6 +215,12 @@ export default function ResultsView({
                                             // here. See `normalise` in
                                             // ClipPlayer's Props.
                                             normalise={false}
+                                            // Apple moves preview files, so an
+                                            // old ranking plays some clips and
+                                            // not others. This repairs the link
+                                            // without touching the recording;
+                                            // see refreshSongPreview.
+                                            onRepairPreview={() => refreshSongPreview(song.id)}
                                         />
                                     </div>
                                 </div>

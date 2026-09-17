@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { SearchResult, Tournament } from "@/lib/types";
+import { normalizeForMatch } from "@/lib/parse";
 import { saveLocalTournament } from "@/lib/localTournaments";
 import { getSessionTournament, setSessionTournament } from "@/lib/sessionCache";
 import { tournamentFormat } from "@/lib/tournamentEngine";
@@ -55,6 +56,8 @@ export function useTournamentLoader(
     updateTournament: (updater: (t: Tournament) => Tournament) => void;
     renameTournament: (nextName: string) => void;
     changeSongVersion: (songId: string, version: SearchResult) => void;
+    /** Repairs one song's dead preview link; see the implementation. */
+    refreshSongPreview: (songId: string) => Promise<boolean>;
     sync: ReactNode;
 } {
     const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -69,6 +72,21 @@ export function useTournamentLoader(
      * see this hook's header. Starts false so nothing writes to localStorage
      * on the strength of an optimistic guess. */
     const signedInRef = useRef(false);
+    /**
+     * The current tournament, readable from an async callback without making
+     * that callback depend on it. `refreshSongPreview` awaits a network round
+     * trip before it touches anything; taking `tournament` as a dependency
+     * would rebuild it on every vote and hand any in-flight call a stale
+     * closure.
+     */
+    const tournamentRef = useRef<Tournament | null>(null);
+    // Kept in sync from an effect rather than assigned during render: writing
+    // a ref while rendering is exactly the pattern React's lint rule warns
+    // about, and an effect is soon enough here -- nothing reads this until a
+    // listener clicks something.
+    useEffect(() => {
+        tournamentRef.current = tournament;
+    }, [tournament]);
 
     useEffect(() => {
         if (checkedCacheRef.current) return;
@@ -220,6 +238,103 @@ export function useTournamentLoader(
      * while (the user could be on /t/[id]/results, where there's no vote
      * left to cast at all).
      */
+    /**
+     * Re-asks the catalogue for one song's preview URL, when the stored one
+     * has stopped working.
+     *
+     * Apple's preview URLs are not permanent. They carry no expiry token, but
+     * the asset path in them (".../AudioPreview125/v4/...") is a storage
+     * location, and a track that gets re-ingested or re-encoded moves. The
+     * stored URL then 404s while the song, the catalogue entry and the ranking
+     * are all perfectly fine -- which is why an old ranking plays some of its
+     * clips and not others, with no pattern a listener can see.
+     *
+     * This repairs the POINTER, never the recording. It overwrites previewUrl
+     * and previewSeconds and touches nothing else: not the title, not the
+     * artist, not the artwork, and above all not the song's id, so every vote
+     * ever cast against it stays valid. That distinction is what keeps this
+     * compatible with a finished ranking locking its versions (see
+     * ResultsView's header) -- swapping which recording a ranking was about
+     * would rewrite what its votes meant; restoring a working link to the same
+     * one does not.
+     *
+     * The identity check is what holds that line. A refreshed preview is only
+     * accepted when it is demonstrably the same recording:
+     *
+     *   - the iTunes track id matches, when the song has one; or
+     *   - the song predates that field (it is optional -- see lib/types.ts)
+     *     and the title AND artist both match exactly once normalised.
+     *
+     * Anything else is a different recording wearing a similar name, and is
+     * refused -- the clip stays broken, which is the honest outcome, rather
+     * than quietly becoming a cover version somebody never voted on.
+     *
+     * Resolves true when a working URL was found and stored.
+     */
+    const refreshSongPreview = useCallback(
+        async (songId: string): Promise<boolean> => {
+            const song = tournamentRef.current?.songs.find((s) => s.id === songId);
+            if (!song) return false;
+
+            let match: SearchResult | null = null;
+            try {
+                const res = await fetch("/api/songs/resolve", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: song.title, artist: song.artist }),
+                });
+                if (!res.ok) return false;
+                const data = (await res.json()) as { preview?: SearchResult | null };
+                match = data.preview ?? null;
+            } catch {
+                return false;
+            }
+            if (!match?.previewUrl) return false;
+
+            const sameRecording =
+                song.itunesId != null && match.itunesId != null
+                    ? song.itunesId === match.itunesId
+                    : normalizeForMatch(song.title) === normalizeForMatch(match.title) &&
+                      normalizeForMatch(song.artist) === normalizeForMatch(match.artist);
+            if (!sameRecording) return false;
+
+            const previewUrl = match.previewUrl;
+            const previewSeconds = match.previewSeconds;
+            setTournament((prev) => {
+                if (!prev) return prev;
+                const next = {
+                    ...prev,
+                    songs: prev.songs.map((s) =>
+                        s.id === songId ? { ...s, previewUrl, previewSeconds, previewNote: null } : s
+                    ),
+                };
+                setSessionTournament(next);
+                if (signedInRef.current) {
+                    saveLocalTournament(next);
+                    fetch(`/api/tournaments/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            name: next.name,
+                            clipSeconds: next.clipSeconds,
+                            format: tournamentFormat(next),
+                            depth: next.depth ?? null,
+                            songs: next.songs,
+                            votes: next.votes,
+                        }),
+                    }).catch(() => {
+                        // Best-effort, same as every other write here: the
+                        // repaired link is already safe in this tab and in
+                        // localStorage.
+                    });
+                }
+                return next;
+            });
+            return true;
+        },
+        [id]
+    );
+
     const changeSongVersion = useCallback(
         (songId: string, version: SearchResult) => {
             setTournament((prev) => {
@@ -262,5 +377,5 @@ export function useTournamentLoader(
         <TournamentServerSync id={id} tournament={tournament} onServerResolved={handleServerResolved} />
     ) : null;
 
-    return { tournament, resolved, updateTournament, renameTournament, changeSongVersion, sync };
+    return { tournament, resolved, updateTournament, renameTournament, changeSongVersion, refreshSongPreview, sync };
 }
