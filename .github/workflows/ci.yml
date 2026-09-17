@@ -1,0 +1,115 @@
+# Runs on every push and pull request.
+#
+# This exists because a day of shipping produced three regressions and every
+# check that caught them was a human typing commands. The suites below were
+# already in the repo and already passing; nothing ran them unless somebody
+# remembered to.
+#
+# What this does and does not catch is worth being honest about. It covers the
+# engine and data-shape class -- including verify-legacy, the only thing
+# standing between a refactor and silently rewriting finished rankings, and
+# verify-nodataloss, which pins a guard written after a real ranking lost ~300
+# votes. It does NOT cover browser behaviour: clip playback broke twice in one
+# day in ways no headless assertion here would have seen. That gap is real and
+# wants a Playwright smoke suite, not a pretence that this closes it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Everything that needs neither a database nor the network. Kept separate
+  # from the database job so an infrastructure problem there can never hide a
+  # genuine failure here.
+  checks:
+    name: Lint, types, build, offline suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The app builds with zero environment variables by design -- see the
+      # "Running locally" section of the README. If this step ever needs a
+      # secret adding, that is itself the bug.
+      - name: Build
+        run: npm run build
+
+      # --experimental-strip-types runs the TypeScript directly; the
+      # register hook resolves this repo's ./db -> lib/db.ts collision.
+      - name: Offline verify suites
+        run: |
+          set -e
+          for s in ranking legacy swiss parse resolve starters compare username filter fuzzy; do
+            echo "::group::verify-$s"
+            node --experimental-strip-types --import ./scripts/register-ts.mjs "scripts/verify-$s.ts"
+            echo "::endgroup::"
+          done
+
+  # The two suites whose subject IS the SQL. They need a real database.
+  database:
+    name: Database suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Deliberately the runner's own PostgreSQL rather than a `services:`
+      # container, and the reason is not preference.
+      #
+      # lib/db.ts sets `ssl: "require"` for Neon, and that option WINS over
+      # sslmode in the connection string -- verified: pointing it at a
+      # non-SSL server fails with "Client network socket disconnected before
+      # secure TLS connection was established", with or without
+      # ?sslmode=disable. The official postgres image has SSL off, so a
+      # service container cannot be connected to at all without editing
+      # lib/db.ts to accommodate a test, which is the wrong way round.
+      #
+      # Debian and Ubuntu clusters come up with ssl = on and a self-signed
+      # certificate already in place, so this connects exactly as a real
+      # deployment does.
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo -u postgres createdb songrank
+          sudo -u postgres psql -d songrank -tAc 'show ssl'
+
+      - name: Apply schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/songrank
+        run: npm run db:migrate
+
+      # verify-sharing truncates the users table and refuses to run against
+      # anything but localhost -- a refusal that is deliberately not
+      # overridable, so this job must never be pointed at a real database.
+      - name: Database verify suites
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/songrank
+        run: |
+          set -e
+          for s in sharing nodataloss; do
+            echo "::group::verify-$s"
+            node --experimental-strip-types --import ./scripts/register-ts.mjs "scripts/verify-$s.ts"
+            echo "::endgroup::"
+          done
