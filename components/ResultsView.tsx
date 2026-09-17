@@ -182,7 +182,20 @@ export default function ResultsView({
                             className={`card p-4 ${isChampion ? "border-accent/50 bg-gradient-to-br from-accent/10 to-transparent" : ""}`}
                         >
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                                <div className="flex items-center gap-3">
+                                {/* min-w-0 is load-bearing, not decoration.
+                                    A flex item defaults to min-width:auto,
+                                    which refuses to shrink below its content
+                                    -- so the `truncate` on the title and
+                                    artist below never fired, and a long
+                                    credit ("Carolina Gaitan - La Gaita, Mauro
+                                    Castillo, Adassa, ...", which is one real
+                                    row of a Disney ranking) stretched this
+                                    group until it shoved the player out past
+                                    the edge of the card. Every row then had
+                                    its play button in a different place.
+                                    flex-1 lets it take the slack when the
+                                    text is short. */}
+                                <div className="flex min-w-0 flex-1 items-center gap-3">
                                     <span className="w-7 shrink-0 text-center text-lg font-bold text-fg-muted">
                                         {isChampion ? "👑" : standing.rank}
                                     </span>
@@ -200,8 +213,12 @@ export default function ResultsView({
                                     </div>
                                 </div>
 
-                                <div className="flex items-start gap-2 sm:ml-auto">
-                                    <div className="sm:w-56">
+                                {/* shrink-0 for the same reason from the
+                                    other side: the player has a fixed width
+                                    and a progress bar in it, and must not be
+                                    the thing that gives when a title is long. */}
+                                <div className="flex shrink-0 items-start gap-2 sm:ml-auto">
+                                    <div className="w-full sm:w-56">
                                         <ClipPlayer
                                             previewUrl={song.previewUrl}
                                             previewSeconds={song.previewSeconds}
