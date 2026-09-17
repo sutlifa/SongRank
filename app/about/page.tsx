@@ -96,7 +96,7 @@ export default function AboutPage() {
                     <strong className="text-fg">Thorough</strong> (the default), each shown with its
                     estimated matchup count before you commit. The target scales with your list size
                     as roughly <code className="rounded bg-bg-soft-2 px-1 py-0.5 text-xs">1.25 × n × log&#8322;n</code>{" "}
-                    matchups at Thorough — about 30 for 8 songs, 480 for 64, 2,560 for the full 256.
+                    matchups at Thorough — 36 for 8 songs, 486 for 64, 2,566 for the full 256.
                     A list of 6 songs or fewer just plays every pair once, which is exact and cheaper
                     than being clever about it.
                 </p>

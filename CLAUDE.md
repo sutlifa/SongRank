@@ -52,6 +52,10 @@ lib/
   db/schema.sql one idempotent file — the entire DDL surface. No migration tool.
   parse.ts      pure paste-parsing heuristics
   itunes.ts     preview/artwork lookup
+  fuzzy.ts      "close enough" word matching, used ONLY when scoring catalogue
+                results — deliberately not by songFilter.ts
+  songFilter.ts the results-page filter — deliberately STRICTER than fuzzy.ts;
+                see its header for why the asymmetry is intentional
 scripts/
   migrate.ts    applies schema.sql
   verify-*.ts   headless invariant checks — run them, don't eyeball
@@ -132,6 +136,25 @@ to find.
    time on the server and reads live on the client — mismatch across New Year.
 7. `react-hooks` v7 flags refs read during render and sync `setState` in effects as
    hard errors. The codebase defers those by one tick; follow the existing pattern.
+8. **A stale device must never be allowed to overwrite a fresher server copy.**
+   `TournamentServerSync` once returned early when this device had any local copy
+   and let the autosave push it up, on the assumption that local is at least as
+   fresh as the server. It is not, when a browser is holding a ranking that was
+   finished somewhere else — and that cost a real ranking ~300 votes, silently.
+   Both halves of the fix are required: the client fetches the server's copy *as
+   well* and hydrates from whichever has more votes, and the upsert itself refuses
+   any save that shrinks a ranking by more than `UNDO_SLACK`. Never make the client
+   the only line of defence. `scripts/verify-nodataloss.ts`.
+9. **Do not "optimise away" the `audio.load()` or the seek in `ClipPlayer`.** Both
+   were removed as redundant nudges on an unproven theory (a browser media-player
+   cap), and clips then failed to load on every matchup after the first until a
+   page reload. A redundant `load()` costs nothing anyone has measured; not loading
+   cost a user their clips. The real cause of dead clips is Apple moving preview
+   asset files — see `refreshSongPreview`.
+10. **Flex children need `min-w-0` before `truncate` does anything.** A flex item
+    defaults to `min-width: auto` and refuses to shrink below its content, so a long
+    artist credit stretched a results row until the play button sat outside the card.
+    This has now been fixed twice, on `SongCard` and on `ResultsView`.
 
 ## Catalogue lookups
 
@@ -173,6 +196,26 @@ The copy notice fires from `saveGuarded` only when `saveTournament` reports
 autosave, so without the check the owner gets one notice per matchup. It also
 keys off the STORED source, so a source that failed the public check can't
 address a notice.
+
+## Rankings list and results
+
+`/my-rankings` is the page about you, reached from the profile tab in the header
+(not a nav link of its own). Split into in-progress and finished; finished rows
+show their podium. `/history` is a redirect kept for bookmarks — don't delete it.
+
+Podiums cannot be read cheaply: standings are derived by replaying the vote log,
+so `getTopCuts` is a SECOND, bounded query that reads the jsonb for at most 40
+ids. `listTournaments` stays counts-only (`jsonb_array_length`) for up to 200
+rows — keep it that way. The page is a server component and passes both lists to
+the client component as props; don't reintroduce a client fetch for data the
+server already had.
+
+**Versions lock when a ranking completes.** `ChangeVersionControl` is on the
+matchup screen only. Every matchup was decided against a specific recording, so
+swapping one afterwards rewrites what those votes meant. `refreshSongPreview` is
+the deliberate exception and is NOT a version change: it repairs a dead
+`previewUrl` for the *same* recording, accepted only on a matching iTunes id (or,
+for songs predating that field, exact normalised title AND artist).
 
 ## Deleting
 
@@ -235,16 +278,38 @@ Swiss was replaced because it cannot produce a reliable full ranking: a correct
 total order of *n* items needs ≥ log₂(n!) comparisons (≈1,684 for 256 songs) and
 8 Swiss rounds only buys 1,024. The engine is now adaptive pairwise (Glicko-style
 rating + uncertainty), pairing the least-predictable matchup each time, with
-anytime stopping and a top-cut playoff to guarantee a decisive #1.
+anytime stopping.
 
-Target matchups ≈ `1.25 × n × log₂(n)`, with a full round-robin at n ≤ 6 and an
-early stop once every adjacent pair separates confidently
+Target matchups ≈ `1.25 × n × log₂(n)` **+ 6**, with a full round-robin at n ≤ 6
+and an early stop once every adjacent pair separates confidently
 (`adjacentSettledFraction`).
 
-The displayed "N% settled" is a **different** measure (`rankingConfidence`):
-fraction of *all* pairs whose gap beats their combined RD. Don't merge the two —
-the adjacent/absolute-gap version reads 0% for every large list (neighbours sit
-~5 rating points apart; the threshold is 85) and that was a shipped bug.
+**The top-cut playoff is retired, forward only.** It used to end a ranking with a
+round robin among the leading four; those six matchups are now spent in the main
+phase, which is where the `+ 6` above comes from. Measured before deciding, with
+the total held equal: whole-chart correlation 0.9805 → 0.9817, every quarter of
+the list level or better, and the podium is the cost (true best song in the top 3,
+91% → 82%). Two things are load-bearing and must not be "tidied":
+
+- **Replay still enters the playoff** whenever it meets a `p`-prefixed vote,
+  because it always keyed off the log's own prefix rather than re-deriving
+  whether that was the right moment. Remove that branch and every finished
+  ranking in every account reopens with a different champion.
+- **`estimateMatchups` returns the number it always did.** `looksComplete` files
+  the rankings list into finished and in-progress from it, so changing it re-files
+  everybody's history on sight.
+
+`scripts/verify-legacy.ts` holds fixtures played by the pre-change engine and is
+the only thing standing between a refactor here and silently rewriting saved
+results. It cannot be regenerated.
+
+`rankingConfidence` (fraction of *all* pairs whose gap beats their combined RD)
+still computes but **nothing renders it**. The "N% settled" readout was withdrawn:
+it counted near-ties as unsettled, so a ranking whose order was ~97% right showed
+83% and read as "17% of this is wrong". Don't put it back without explaining it.
+Also don't merge it with `adjacentSettledFraction` — that version reads 0% for
+every large list (neighbours sit ~5 rating points apart; the threshold is 85) and
+that was a shipped bug.
 
 A matchup can also be answered "flip a coin" (`Vote.tie`), applied as an Elo draw:
 0.5 each, no win/loss credited, excluded from the head-to-head tiebreak map, but
