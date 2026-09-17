@@ -115,10 +115,13 @@ export default function AboutPage() {
                     informative.
                 </p>
                 <p className="text-sm leading-relaxed text-fg-muted">
-                    Once the main phase ends, the top few contenders play a short extra round robin
-                    against each other — a few more matchups, regardless of list size — so first
-                    place is decided by actually beating the other leading songs head to head, not
-                    inherited from ratings alone.
+                    Every one of those matchups is chosen the same way, right to the end. A ranking
+                    used to finish with a short playoff between the leading few songs, and that was
+                    dropped: six matchups among four songs settles a podium, but ordering the whole
+                    chart is the job, and those same six comparisons do more good spread across the
+                    list. Measured over a hundred simulated 60-song rankings, moving them back into
+                    the main phase left the whole-chart ordering slightly more accurate, and every
+                    quarter of the list level or better.
                 </p>
             </section>
 

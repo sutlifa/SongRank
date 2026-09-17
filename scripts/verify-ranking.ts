@@ -294,18 +294,40 @@ for (let n = 2; n <= MAX_SONGS; n++) {
 
 // The brief's own sanity-check numbers -- pinned exactly so a change to
 // RANKING_DEPTH_FACTORS.thorough or the formula shape is caught immediately.
-const sanityPoints: [number, number][] = [
-    [8, 30],
-    [16, 80],
-    [32, 200],
-    [64, 480],
-    [128, 1120],
-    [256, 2560],
+// The second number is the n*log2(n) curve alone; the third is what the main
+// phase now actually asks for, which is that plus the six matchups the retired
+// top-cut playoff used to take (see LEGACY_PLAYOFF_MATCHUPS in lib/ranking.ts).
+// Both are pinned, so neither the curve nor the absorbed amount can drift
+// unnoticed -- and so the arithmetic of the change stays visible here rather
+// than only in a comment.
+const sanityPoints: [number, number, number][] = [
+    [8, 30, 36],
+    [16, 80, 86],
+    [32, 200, 206],
+    [64, 480, 486],
+    [128, 1120, 1126],
+    [256, 2560, 2566],
 ];
-for (const [n, expected] of sanityPoints) {
+for (const [n, curve, expected] of sanityPoints) {
     check(
         mainPhaseBudget(n, "thorough") === expected,
         `mainPhaseBudget(${n}, thorough) = ${mainPhaseBudget(n, "thorough")}, expected ${expected}`
+    );
+    check(
+        expected - curve === 6,
+        `n=${n}: the main phase absorbed ${expected - curve} playoff matchups, expected 6`
+    );
+    // THE migration invariant. A saved ranking is filed as finished or
+    // in-progress by comparing its vote count against estimateMatchups (see
+    // looksComplete in lib/tournamentEngine.ts), so if retiring the playoff
+    // had changed this number, every ranking in every user's history would
+    // have been re-filed the moment the change deployed -- finished ones
+    // reopening, which is the one outcome this change was required not to
+    // produce. It is the same total as when a playoff was still scheduled:
+    // the matchups moved, they were not added or removed.
+    check(
+        estimateMatchups(n, "thorough") === curve + 6,
+        `n=${n}: estimateMatchups is ${estimateMatchups(n, "thorough")}, expected the pre-change total of ${curve + 6}`
     );
 }
 check(RANKING_DEPTH_FACTORS.thorough === 1.25, "thorough factor drifted from the brief's 1.25x n*log2(n)");

@@ -44,7 +44,9 @@ export interface UnifiedCurrentMatchup {
     pairingId: string;
     a: string;
     b: string;
-    /** "Round 2 of 4" (Swiss) or "Ranking in progress" / "Top-cut playoff" (adaptive). */
+    /** "Round 2 of 4" (Swiss) or "Ranking in progress" (adaptive; or
+     * "Top-cut playoff" for a saved ranking still finishing a playoff from
+     * before that phase was retired -- see lib/ranking.ts's header). */
     label: string;
     /** One line of extra context, or null when there's nothing to add. */
     note: string | null;
@@ -145,9 +147,13 @@ function fromRanking(t: Tournament): UnifiedDerived {
                   pairingId: d.current.pairingId,
                   a: d.current.a,
                   b: d.current.b,
+                  // `inPlayoffs` is now only ever true for a ranking saved
+                  // before the playoff was retired and caught partway through
+                  // one; it finishes the phase it started. Nothing new enters
+                  // it. See lib/ranking.ts's "Legacy playoffs" note.
                   label: d.inPlayoffs ? "Top-cut playoff" : "Ranking in progress",
                   note: d.inPlayoffs
-                      ? "The leading songs are playing a short round robin so first place is settled head-to-head, not just by rating."
+                      ? "This ranking is finishing a short round robin between its leading songs. Rankings started now spend those matchups across the whole list instead."
                       : null,
                   numberInRound: d.current.numberInPhase,
                   matchupsInRound: d.current.phaseTotal,
