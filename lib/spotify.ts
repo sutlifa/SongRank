@@ -34,7 +34,7 @@
 // the half that can be tested at all (scripts/verify-spotify.ts), and the
 // thin half is what a first real run has to shake out.
 
-import { scoreCandidate } from "./itunes.ts";
+import { scoreCandidate, primaryArtist } from "./itunes.ts";
 import { normalizeForMatch, type MatchConfidence } from "./parse.ts";
 
 const SPOTIFY_API = "https://api.spotify.com/v1";
@@ -166,10 +166,27 @@ function forField(value: string): string {
  */
 export function searchQueries(title: string, artist: string): string[] {
     const t = forField(title);
-    const a = forField(artist);
+    // The PRIMARY artist, not the whole credit, and this is the single
+    // biggest thing standing between this feature and a rate limit.
+    //
+    // `artist:` matches against an artist NAME. A soundtrack credit --
+    // "Jeremy Irons, Whoopi Goldberg, Cheech Marin & Jim Cummings", or the
+    // seven names on "We Don't Talk About Bruno" -- is not any artist's name,
+    // so the filtered query matched NOTHING and every such song fell through
+    // the entire ladder. On a Disney ranking that is close to every song: three
+    // requests each instead of one, against a quota counted in requests, which
+    // is what turned an export into a queue of rate-limit pauses.
+    //
+    // primaryArtist is lib/itunes.ts's, already used for exactly this problem
+    // when resolving previews, so the two agree about who a song is "by".
+    const a = forField(primaryArtist(artist));
     const queries: string[] = [];
     if (t && a) queries.push(`track:"${t}" artist:"${a}"`);
-    if (t) queries.push(`track:"${t}"`);
+    // One fallback, not two. The title-only rung existed to rescue the long
+    // credit case above, which is now handled at the source; a plain query
+    // leans on Spotify's own relevance ranking, which is better than ours at
+    // the cases a structured query gets wrong (an official title carrying a
+    // parenthetical ours doesn't, or the reverse).
     const plain = [t, a].filter(Boolean).join(" ");
     if (plain) queries.push(plain);
     // Dedupe while keeping order: a song with no artist produces the same

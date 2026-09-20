@@ -45,15 +45,47 @@ function check(label: string, actual: unknown, expected: unknown): void {
 
 // --- phrasing the query ---------------------------------------------------
 check("both filters first", searchQueries("Let It Go", "Idina Menzel")[0], 'track:"Let It Go" artist:"Idina Menzel"');
-check("then title alone", searchQueries("Let It Go", "Idina Menzel")[1], 'track:"Let It Go"');
-check("then plain text", searchQueries("Let It Go", "Idina Menzel")[2], "Let It Go Idina Menzel");
+check("then plain text", searchQueries("Let It Go", "Idina Menzel")[1], "Let It Go Idina Menzel");
+// TWO rungs, not three. Every extra rung is another request per song against a
+// quota counted in requests, and the third existed only to rescue the long
+// credit case that the primary-artist fix below handles at the source.
+check("and no more than two", searchQueries("Let It Go", "Idina Menzel").length, 2);
+
+// THE expensive bug this pins. `artist:` matches an artist NAME, and a
+// soundtrack credit is not one -- so the filtered query matched nothing, every
+// such song fell through the whole ladder, and a Disney ranking cost three
+// requests per song instead of one. These are real credits from a real
+// ranking.
+check(
+    "a soundtrack credit is reduced to its primary artist",
+    searchQueries("Be Prepared", "Jeremy Irons, Whoopi Goldberg, Cheech Marin & Jim Cummings")[0],
+    'track:"Be Prepared" artist:"Jeremy Irons"'
+);
+check(
+    "...including the seven-name kind",
+    searchQueries(
+        "We Don't Talk About Bruno",
+        "Carolina Gaitan - La Gaita, Mauro Castillo, Adassa, Rhenzy Feliz, Diane Guerrero, Stephanie Beatriz & Encanto - Cast"
+    )[0],
+    'track:"We Don t Talk About Bruno" artist:"Carolina Gaitan - La Gaita"'
+);
+check(
+    "a featured credit drops the guest",
+    searchQueries("Empire State of Mind", "JAY-Z feat. Alicia Keys")[0],
+    'track:"Empire State of Mind" artist:"JAY-Z"'
+);
+check(
+    "a plain single artist is untouched",
+    searchQueries("Bohemian Rhapsody", "Queen")[0],
+    'track:"Bohemian Rhapsody" artist:"Queen"'
+);
 // A quote in a title must not break out of its own field filter and turn the
 // rest of the query into syntax.
 check("quotes are stripped", searchQueries('Don"t Stop', "Queen")[0], 'track:"Don t Stop" artist:"Queen"');
 check("apostrophes too", searchQueries("Don't Stop Me Now", "Queen")[0], 'track:"Don t Stop Me Now" artist:"Queen"');
 // No artist: the title filter and the plain query would be the same string,
 // and asking a rate-limited endpoint the same question twice is waste.
-check("no artist yields no duplicate rungs", searchQueries("Let It Go", ""), ['track:"Let It Go"', "Let It Go"]);
+check("no artist yields one plain query", searchQueries("Let It Go", ""), ["Let It Go"]);
 check("nothing to search for", searchQueries("", ""), []);
 
 // --- reading the response -------------------------------------------------
