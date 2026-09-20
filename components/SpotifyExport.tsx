@@ -47,6 +47,8 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
      * confidence -- see the effect below. */
     const [accepted, setAccepted] = useState<Set<number>>(new Set());
     const [busy, setBusy] = useState<"matching" | "creating" | null>(null);
+    /** How far through the ranking the match walk has got. */
+    const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<{ url: string; added: number; requested: number; complete: boolean } | null>(null);
 
@@ -57,21 +59,53 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
             .catch(() => setStatus({ configured: false, connected: false }));
     }, []);
 
+    /**
+     * Walks the ranking a slice at a time.
+     *
+     * Not one request, deliberately. Matching a whole ranking in a single call
+     * is what made this fail on a real one: enough sequential lookups to
+     * outlive the serverless function's duration limit, surfacing as "Spotify
+     * didn't answer" because an aborted fetch and a quiet upstream look
+     * identical from inside. Slices also mean there is honest progress to show
+     * instead of a button that sits there for a minute.
+     */
     async function runMatch() {
         setBusy("matching");
         setError(null);
+        setProgress(null);
         try {
-            const res = await fetch("/api/spotify/match", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tournamentId }),
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                setError(data.error ?? "Could not check your songs against Spotify");
-                if (data.reason) setStatus({ configured: true, connected: false });
-                return;
+            const collected: Match[] = [];
+            let offset = 0;
+            let header: { name: string; songCount: number; matchupCount: number } | null = null;
+
+            for (;;) {
+                const res = await fetch("/api/spotify/match", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ tournamentId, offset }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    setError(
+                        // The reason is an HTTP status or a network error, never
+                        // a secret. Shown because "try again in a moment" with no
+                        // detail is what made the first real failure impossible
+                        // to diagnose without a server log.
+                        data.reason ? `${data.error} (${data.reason})` : (data.error ?? "Could not check your songs against Spotify")
+                    );
+                    if (data.reason === "not_connected" || data.reason === "reconnect") {
+                        setStatus({ configured: true, connected: false });
+                    }
+                    return;
+                }
+                header ??= { name: data.name, songCount: data.songCount, matchupCount: data.matchupCount };
+                collected.push(...(data.matches as Match[]));
+                setProgress({ done: collected.length, total: data.total });
+                if (data.done) break;
+                offset = collected.length;
             }
+
+            const data = { ...header!, matches: collected };
             setReview(data);
             // Confident matches start ticked; anything less starts UNTICKED.
             // A partial is a guess, and a guess should have to be looked at
@@ -170,7 +204,11 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 </p>
                 {error && <p className="mb-3 text-sm text-danger">{error}</p>}
                 <button type="button" onClick={runMatch} disabled={busy !== null} className="btn-secondary">
-                    {busy === "matching" ? "Checking songs…" : "Check songs on Spotify"}
+                    {busy === "matching"
+                        ? progress
+                            ? `Checking songs… ${progress.done} of ${progress.total}`
+                            : "Checking songs…"
+                        : "Check songs on Spotify"}
                 </button>
             </div>
         );

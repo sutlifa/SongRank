@@ -2,11 +2,18 @@ import { NextResponse } from "next/server";
 import { requireUser, isGuardFailure } from "@/lib/auth-guard";
 import { getTournament } from "@/lib/queries";
 import { currentSpotifySession, isSessionFailure } from "@/lib/spotifySession";
-import { apiSearch, matchTracks, versionMismatch, SpotifyUnavailableError } from "@/lib/spotify";
+import { apiSearch, matchTracks, versionMismatch, SpotifyUnavailableError, MATCH_SLICE } from "@/lib/spotify";
 import { deriveTournament } from "@/lib/tournamentEngine";
 
 /**
- * POST /api/spotify/match  { tournamentId }
+ * Vercel kills a function at its duration limit, and the default is short. A
+ * slice of MATCH_SLICE songs at MATCH_CONCURRENCY at a time is a few seconds;
+ * this is headroom for a slow upstream, not a target.
+ */
+export const maxDuration = 60;
+
+/**
+ * POST /api/spotify/match  { tournamentId, offset?, limit? }
  *
  * Works out what each song in a finished ranking would become on Spotify.
  * WRITES NOTHING -- this is the review step, and the whole point of splitting
@@ -22,10 +29,11 @@ export async function POST(req: Request) {
     if (isGuardFailure(g)) return g.response;
 
     try {
-        const body = (await req.json()) as { tournamentId?: unknown };
+        const body = (await req.json()) as { tournamentId?: unknown; offset?: unknown };
         if (typeof body.tournamentId !== "string" || !body.tournamentId.trim()) {
             return NextResponse.json({ error: "Missing ranking id" }, { status: 400 });
         }
+        const offset = Number.isInteger(body.offset) && (body.offset as number) >= 0 ? (body.offset as number) : 0;
 
         // Scoped to this user's own rankings. Matching someone else's is a
         // read of their song list they never agreed to, and there is no
@@ -72,11 +80,23 @@ export async function POST(req: Request) {
             return song ? [{ title: song.title, artist: song.artist }] : [];
         });
 
-        const matches = await matchTracks(ordered, apiSearch(session.accessToken));
+        // A SLICE, not the whole ranking.
+        //
+        // Matching every song in one request is what made this fail on a real
+        // ranking: even a few hundred milliseconds per lookup adds up past the
+        // function's duration limit, and the killed request surfaced as
+        // "Spotify didn't answer" -- an aborted fetch and a quiet upstream are
+        // indistinguishable from inside. The client walks the ranking a slice
+        // at a time and can show progress while it does.
+        const slice = ordered.slice(offset, offset + MATCH_SLICE);
+        const matches = await matchTracks(slice, apiSearch(session.accessToken), { startRank: offset + 1 });
         return NextResponse.json({
             name: tournament.name,
             songCount: tournament.songs.length,
             matchupCount: tournament.votes.length,
+            total: ordered.length,
+            offset,
+            done: offset + slice.length >= ordered.length,
             matches: matches.map((m) => ({
                 ...m,
                 // Same title, same credited artist, different recording --
@@ -89,7 +109,16 @@ export async function POST(req: Request) {
         if (err instanceof SpotifyUnavailableError) {
             // Distinct from "no match": reporting a rate limit as "not on
             // Spotify" is the exact lie lib/itunes.ts documents at length.
-            return NextResponse.json({ error: "Spotify didn't answer — try again in a moment." }, { status: 503 });
+            //
+            // `reason` rides along -- it is an HTTP status or a network error
+            // string, never a token or a secret -- because the friendly
+            // sentence alone left the first real failure undiagnosable without
+            // reading a server log.
+            console.error("SPOTIFY MATCH UNAVAILABLE:", err.reason);
+            return NextResponse.json(
+                { error: "Spotify didn't answer — try again in a moment.", reason: err.reason },
+                { status: 503 }
+            );
         }
         console.error("SPOTIFY MATCH ERROR:", err);
         return NextResponse.json({ error: "Could not check your songs against Spotify" }, { status: 500 });

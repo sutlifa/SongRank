@@ -27,6 +27,7 @@ import {
     playlistDescription,
     matchOne,
     matchTracks,
+    MATCH_CONCURRENCY,
     MAX_URIS_PER_REQUEST,
     type SpotifyTrack,
 } from "../lib/spotify.ts";
@@ -226,6 +227,55 @@ check("every song is accounted for", all.length, 3);
 check("ranks are 1-based and in order", all.map((m) => m.rank), [1, 2, 3]);
 check("the miss is kept, not dropped", all[1].match, null);
 check("matches carry their uri", all[2].match?.uri, "spotify:track:s1");
+
+// --- order under concurrency ---------------------------------------------
+//
+// Lookups run a few at a time, so results arrive out of order. The playlist IS
+// the ranking, so a result array reflecting COMPLETION order instead of rank
+// order would silently produce a shuffled playlist -- intermittently, decided
+// by which searches happened to be slow. That is the worst shape of bug this
+// feature could have, so the delays below are deliberately inverted: the first
+// song is the slowest and the last is instant.
+const slowFirst: SpotifyTrack[] = Array.from({ length: 12 }, (_, i) =>
+    track(`id${i}`, `Track ${i}`, "Artist")
+);
+let inFlight = 0;
+let peakInFlight = 0;
+const staggered = async (query: string) => {
+    inFlight += 1;
+    peakInFlight = Math.max(peakInFlight, inFlight);
+    const index = Number(query.match(/Track (\d+)/)?.[1] ?? "0");
+    // Earlier tracks wait longer, so completion order is the reverse of rank.
+    await new Promise((resolve) => setTimeout(resolve, (slowFirst.length - index) * 4));
+    inFlight -= 1;
+    return slowFirst.filter((t) => t.title === `Track ${index}`);
+};
+
+const ordered = await matchTracks(
+    slowFirst.map((t) => ({ title: t.title, artist: t.artist })),
+    staggered
+);
+check("every song is present", ordered.length, 12);
+check("ranks come back in order", ordered.map((m) => m.rank), Array.from({ length: 12 }, (_, i) => i + 1));
+check(
+    "each rank carries ITS OWN song, not whichever finished first",
+    ordered.every((m, i) => m.title === `Track ${i}` && m.match?.id === `id${i}`),
+    true
+);
+check("no gaps in the result array", ordered.every((m) => m !== undefined), true);
+// The point of the change: several lookups really are in flight at once.
+check("lookups actually overlap", peakInFlight > 1, true);
+check("...but not unboundedly", peakInFlight <= MATCH_CONCURRENCY, true);
+
+// A slice of a longer ranking must report the ranks it actually occupies.
+const slice = await matchTracks(
+    [{ title: "Track 3", artist: "Artist" }, { title: "Track 4", artist: "Artist" }],
+    staggered,
+    { startRank: 26 }
+);
+check("a slice reports its real ranks", slice.map((m) => m.rank), [26, 27]);
+
+check("an empty list is fine", (await matchTracks([], staggered)).length, 0);
 
 if (failures.length > 0) {
     console.error(`\n${failures.length} of ${checks} checks FAILED:\n`);

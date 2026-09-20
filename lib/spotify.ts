@@ -277,16 +277,74 @@ export async function matchOne(
     return fallback;
 }
 
-/** Every song in a ranking, in order. */
+/**
+ * How many songs are looked up at once.
+ *
+ * Matching was originally one song after another, which is fine in a script
+ * and hopeless in a serverless function: a 200-song ranking is 200 to 600
+ * sequential HTTPS round trips, comfortably past any function timeout, and it
+ * presented as "Spotify didn't answer" because the aborted fetch is
+ * indistinguishable from an upstream that went quiet.
+ *
+ * Four rather than "all of them" because the endpoint is rate-limited per
+ * application, not per user -- see lib/itunes.ts's UpstreamUnavailableError
+ * comment for what a burst at a metered search endpoint did to this app once
+ * already. Four is enough to turn minutes into seconds without becoming the
+ * next incident.
+ */
+export const MATCH_CONCURRENCY = 4;
+
+/**
+ * How many songs one match request handles.
+ *
+ * The client walks a ranking in slices of this size so no single request can
+ * outlive the function's duration limit, however long the ranking is. 25 at a
+ * concurrency of 4 is roughly seven round trips deep -- a couple of seconds --
+ * and gives a 200-song ranking eight requests rather than one that never
+ * finishes.
+ */
+export const MATCH_SLICE = 25;
+
+/**
+ * Every song in `songs`, in order, looked up a few at a time.
+ *
+ * ORDER IS PRESERVED regardless of which lookups finish first: results are
+ * written to their own index rather than pushed. The playlist is the ranking,
+ * so a result array that reflects completion order instead of rank order would
+ * silently produce a shuffled playlist -- and it would do it intermittently,
+ * depending on which searches happened to be slow.
+ *
+ * `startRank` offsets the rank numbers, because callers fetch a ranking in
+ * slices (see the match route) and a slice starting at song 26 must report
+ * ranks 26.. rather than 1...
+ */
 export async function matchTracks(
     songs: { title: string; artist: string }[],
-    search: SpotifySearch
+    search: SpotifySearch,
+    options: { concurrency?: number; startRank?: number } = {}
 ): Promise<TrackMatch[]> {
-    const out: TrackMatch[] = [];
-    for (const [index, song] of songs.entries()) {
-        const { match, confidence } = await matchOne(song, search);
-        out.push({ rank: index + 1, title: song.title, artist: song.artist, match, confidence });
+    const concurrency = Math.max(1, options.concurrency ?? MATCH_CONCURRENCY);
+    const startRank = options.startRank ?? 1;
+    const out = new Array<TrackMatch>(songs.length);
+    let next = 0;
+
+    async function worker(): Promise<void> {
+        for (;;) {
+            const index = next++;
+            if (index >= songs.length) return;
+            const song = songs[index];
+            const { match, confidence } = await matchOne(song, search);
+            out[index] = {
+                rank: startRank + index,
+                title: song.title,
+                artist: song.artist,
+                match,
+                confidence,
+            };
+        }
     }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, songs.length) }, worker));
     return out;
 }
 
