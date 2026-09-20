@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, isGuardFailure } from "@/lib/auth-guard";
-import { getTournament } from "@/lib/queries";
+import { getTournament, getCachedSpotifyMatches, saveCachedSpotifyMatches, type CachedSpotifyMatch } from "@/lib/queries";
 import { currentSpotifySession, isSessionFailure } from "@/lib/spotifySession";
-import { apiSearch, matchTracks, versionMismatch, SpotifyUnavailableError, MATCH_SLICE } from "@/lib/spotify";
+import { apiSearch, matchTracks, versionMismatch, SpotifyUnavailableError, MATCH_SLICE, cacheKey, type TrackMatch } from "@/lib/spotify";
 import { deriveTournament } from "@/lib/tournamentEngine";
 
 /**
@@ -89,13 +89,94 @@ export async function POST(req: Request) {
         // indistinguishable from inside. The client walks the ranking a slice
         // at a time and can show progress while it does.
         const slice = ordered.slice(offset, offset + MATCH_SLICE);
-        const matches = await matchTracks(slice, apiSearch(session.accessToken), { startRank: offset + 1 });
+
+        // Remembered answers first. Against a development-mode quota a search
+        // result is the scarcest thing this feature has -- exhaust the
+        // allowance and the app is locked out for a while -- so a song that
+        // has ever been looked up, by anyone, is never looked up again. A
+        // re-run or a resumed export therefore costs nothing for the part
+        // already done.
+        const keys = slice.map((song) => cacheKey(song.title, song.artist));
+        const cached = await getCachedSpotifyMatches(keys);
+        const keyOf = (i: number) => `${keys[i].titleKey}\u0000${keys[i].artistKey}`;
+
+        const unknown: { song: { title: string; artist: string }; index: number }[] = [];
+        const matches: TrackMatch[] = slice.map((song, i) => {
+            const hit = cached.get(keyOf(i));
+            if (!hit) {
+                unknown.push({ song, index: i });
+                // Placeholder; replaced below once the search answers.
+                return { rank: offset + i + 1, title: song.title, artist: song.artist, match: null, confidence: "none" };
+            }
+            return {
+                rank: offset + i + 1,
+                title: song.title,
+                artist: song.artist,
+                match: hit.uri
+                    ? {
+                          id: hit.uri.split(":").pop() ?? hit.uri,
+                          uri: hit.uri,
+                          title: hit.title ?? song.title,
+                          artist: hit.artist ?? song.artist,
+                          album: hit.album,
+                          durationMs: null,
+                          explicit: false,
+                      }
+                    : null,
+                confidence: hit.confidence,
+            };
+        });
+
+        // Only genuine unknowns reach Spotify.
+        if (unknown.length > 0) {
+            // Banked as each answer lands, not after the batch finishes.
+            //
+            // This is the difference between a lockout costing a slice and a
+            // lockout costing nothing. A 429 part-way through rejects
+            // matchTracks, and the old shape -- await, then remember -- threw
+            // away every answer already paid for along with it. So a person
+            // who came back after the penalty re-paid for the same songs, hit
+            // the limit at the same place, and never advanced. Now the
+            // callback records each one as it arrives and the save runs even
+            // on the way out, so every request spent is a song learned for
+            // good and the next attempt starts further along.
+            const toRemember: CachedSpotifyMatch[] = [];
+            try {
+                await matchTracks(
+                    unknown.map((u) => u.song),
+                    apiSearch(session.accessToken),
+                    {
+                        onResult: (n, result) => {
+                            const { index } = unknown[n];
+                            matches[index] = { ...result, rank: offset + index + 1 };
+                            toRemember.push({
+                                titleKey: keys[index].titleKey,
+                                artistKey: keys[index].artistKey,
+                                uri: result.match?.uri ?? null,
+                                title: result.match?.title ?? null,
+                                artist: result.match?.artist ?? null,
+                                album: result.match?.album ?? null,
+                                // A miss is remembered too: it cost a request
+                                // to learn, and re-learning it costs another.
+                                confidence: result.confidence,
+                            });
+                        },
+                    }
+                );
+            } finally {
+                // Deliberately in `finally`: the case worth saving for is the
+                // one where the line above threw.
+                if (toRemember.length > 0) await saveCachedSpotifyMatches(toRemember);
+            }
+        }
         return NextResponse.json({
             name: tournament.name,
             songCount: tournament.songs.length,
             matchupCount: tournament.votes.length,
             total: ordered.length,
             offset,
+            // So the UI can say how much of this cost nothing.
+            fromCache: slice.length - unknown.length,
             done: offset + slice.length >= ordered.length,
             matches: matches.map((m) => ({
                 ...m,

@@ -60,7 +60,7 @@ jobs:
             echo "::endgroup::"
           done
 
-  # The two suites whose subject IS the SQL. They need a real database.
+  # The suites whose subject IS the SQL. They need a real database.
   database:
     name: Database suites
     runs-on: ubuntu-latest
@@ -108,7 +108,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/songrank
         run: |
           set -e
-          for s in sharing nodataloss; do
+          for s in sharing nodataloss spotify-cache; do
             echo "::group::verify-$s"
             node --experimental-strip-types --import ./scripts/register-ts.mjs "scripts/verify-$s.ts"
             echo "::endgroup::"

@@ -27,6 +27,7 @@ import {
     playlistDescription,
     matchOne,
     matchTracks,
+    cacheKey,
     MATCH_CONCURRENCY,
     MAX_URIS_PER_REQUEST,
     retryAfterSeconds,
@@ -374,6 +375,90 @@ check("an error with no instruction says so", new SpotifyUnavailableError("netwo
 // Concurrency is part of this: it was lowered after a real 429, and turning it
 // back up without an extended quota just moves where the limit lands.
 check("lookups stay gentle by default", MATCH_CONCURRENCY <= 2, true);
+
+// --- never paying for the same song twice --------------------------------
+//
+// With a development-mode quota a search result is the scarcest thing this
+// feature has, so every answer is remembered (spotify_track_matches, written
+// through lib/queries.ts). Two things have to hold for that to be worth
+// anything, and both are checked here.
+
+// ONE: the key has to be the SONG, not the way one ranking happened to spell
+// it. Soundtrack credits are the case that matters -- the same recording
+// arrives as a seven-name credit in one list and a single name in another, and
+// if those land on different rows the cache pays twice for one song.
+const wholeCast = cacheKey("Let It Go", "Idina Menzel, Kristen Anderson-Lopez & Robert Lopez");
+const justHer = cacheKey("let it go", "Idina Menzel");
+check("the same song from two credit styles is one key", wholeCast, justHer);
+check("case and trailing punctuation do not split a key", cacheKey("Don't Stop!", "Queen"), cacheKey("don't stop", "queen"));
+// Known limit, asserted rather than wished away: normalizeForMatch turns an
+// apostrophe into a SPACE, so "Don't" and "Dont" are different keys. That is
+// a cache miss, never a wrong answer, and it is not worth changing
+// normalizeForMatch for -- that function also decides what counts as a match
+// and what counts as a duplicate song, and moving it moves those too.
+check(
+    "an apostrophe dropped entirely is a different key (a miss, not a lie)",
+    cacheKey("Don't Stop", "Queen").titleKey === cacheKey("Dont Stop", "Queen").titleKey,
+    false
+);
+// And it must still SEPARATE things that are genuinely different, or the cache
+// starts handing back the wrong track, which is the silent wrongness this
+// whole file exists to prevent.
+check(
+    "different artists stay different keys",
+    cacheKey("Hallelujah", "Jeff Buckley").artistKey === cacheKey("Hallelujah", "Leonard Cohen").artistKey,
+    false
+);
+check(
+    "different titles stay different keys",
+    cacheKey("Africa", "Toto").titleKey === cacheKey("Rosanna", "Toto").titleKey,
+    false
+);
+// A song with no artist credit is a real case (a bare title list) and must not
+// blow up or collapse into some other song.
+check("a missing artist is an empty key, not a crash", cacheKey("Untitled", "").artistKey, "");
+
+// TWO: an answer already paid for must survive the request that fails.
+//
+// This is the bug the user actually hit. A 429 part-way through a batch
+// rejected matchTracks, the caller's "await, then remember" discarded every
+// answer already bought, and so coming back after the penalty re-paid for the
+// same songs, died in the same place, and never advanced. `onResult` fires as
+// each answer lands so the caller can bank it before the throw.
+const banked: { index: number; title: string }[] = [];
+let asked = 0;
+const diesPartway = async (query: string) => {
+    asked += 1;
+    // Four answers, then the limiter closes the door.
+    if (asked > 4) throw new SpotifyUnavailableError("HTTP 429", 1800);
+    const index = Number(query.match(/Track (\d+)/)?.[1] ?? "0");
+    return slowFirst.filter((t) => t.title === `Track ${index}`);
+};
+let threw: unknown = null;
+try {
+    await matchTracks(
+        slowFirst.slice(0, 8).map((t) => ({ title: t.title, artist: t.artist })),
+        diesPartway,
+        { onResult: (index, result) => banked.push({ index, title: result.title }) }
+    );
+} catch (err) {
+    threw = err;
+}
+check("a rate limit still reaches the caller", threw instanceof SpotifyUnavailableError, true);
+// The number is what makes this worth doing: four songs bought, four songs
+// kept. If this ever reads 0 the cache cannot advance through a lockout, which
+// is indistinguishable from not having a cache at all.
+check("every answer bought before the limit was handed over", banked.length, 4);
+check(
+    "...each one tagged with the song it belongs to",
+    banked.map((b) => b.title),
+    ["Track 0", "Track 1", "Track 2", "Track 3"]
+);
+check(
+    "...and indexed into the batch, so the caller knows which song it was",
+    banked.map((b) => b.index),
+    [0, 1, 2, 3]
+);
 
 if (failures.length > 0) {
     console.error(`\n${failures.length} of ${checks} checks FAILED:\n`);

@@ -3,6 +3,7 @@ import { sql } from "./db";
 import type { Song, Vote, ClipSeconds, RankingDepth, TournamentFormat } from "./types";
 import { deriveTournament } from "./tournamentEngine";
 import { encryptToken, decryptToken } from "./spotifyAuth";
+import type { MatchConfidence } from "./parse";
 
 /**
  * Tournament persistence for signed-in users.
@@ -651,4 +652,105 @@ export async function getSpotifyAccount(userId: number): Promise<SpotifyAccount 
 
 export async function deleteSpotifyAccount(userId: number): Promise<void> {
     await sql`DELETE FROM spotify_accounts WHERE user_id = ${userId}`;
+}
+
+/** A remembered Spotify answer for one song. `uri` null means a known miss. */
+export interface CachedSpotifyMatch {
+    titleKey: string;
+    artistKey: string;
+    uri: string | null;
+    title: string | null;
+    artist: string | null;
+    album: string | null;
+    confidence: MatchConfidence;
+}
+
+/**
+ * How long a remembered MISS is trusted.
+ *
+ * Hits never expire -- a track that exists keeps existing, and re-checking it
+ * spends the one resource this cache exists to protect. A miss is different:
+ * Spotify's catalogue really does gain tracks, so "not there" is only true as
+ * of when it was asked. Two weeks is long enough to keep a big export cheap
+ * and short enough that a newly added song turns up eventually.
+ */
+const MISS_TTL_DAYS = 14;
+
+/**
+ * Looks up remembered answers for a batch of songs.
+ *
+ * One query for the whole batch rather than one per song: the point of this
+ * cache is to make an export cheap, and a per-song round trip to Postgres
+ * would just move the cost rather than remove it.
+ */
+export async function getCachedSpotifyMatches(
+    keys: { titleKey: string; artistKey: string }[]
+): Promise<Map<string, CachedSpotifyMatch>> {
+    const out = new Map<string, CachedSpotifyMatch>();
+    if (keys.length === 0) return out;
+
+    const titleKeys = keys.map((k) => k.titleKey);
+    const artistKeys = keys.map((k) => k.artistKey);
+    const rows = await sql<
+        {
+            title_key: string;
+            artist_key: string;
+            track_uri: string | null;
+            track_title: string | null;
+            track_artist: string | null;
+            track_album: string | null;
+            confidence: MatchConfidence;
+        }[]
+    >`
+        SELECT title_key, artist_key, track_uri, track_title, track_artist, track_album, confidence
+        FROM spotify_track_matches
+        WHERE (title_key, artist_key) IN (
+            SELECT * FROM unnest(${titleKeys}::text[], ${artistKeys}::text[])
+        )
+          -- A remembered hit is always good; a remembered miss expires.
+          AND (track_uri IS NOT NULL OR checked_at > now() - ${`${MISS_TTL_DAYS} days`}::interval)
+    `;
+    for (const row of rows) {
+        out.set(`${row.title_key}\u0000${row.artist_key}`, {
+            titleKey: row.title_key,
+            artistKey: row.artist_key,
+            uri: row.track_uri,
+            title: row.track_title,
+            artist: row.track_artist,
+            album: row.track_album,
+            confidence: row.confidence,
+        });
+    }
+    return out;
+}
+
+/**
+ * Remembers answers, including misses.
+ *
+ * Upsert rather than insert-if-absent: a miss that has since become a hit
+ * should replace the miss, and re-checking after the TTL should reset the
+ * clock. Written in one statement for the same reason the read is one query.
+ */
+export async function saveCachedSpotifyMatches(matches: CachedSpotifyMatch[]): Promise<void> {
+    if (matches.length === 0) return;
+    await sql`
+        INSERT INTO spotify_track_matches ${sql(
+            matches.map((m) => ({
+                title_key: m.titleKey,
+                artist_key: m.artistKey,
+                track_uri: m.uri,
+                track_title: m.title,
+                track_artist: m.artist,
+                track_album: m.album,
+                confidence: m.confidence,
+            }))
+        )}
+        ON CONFLICT (title_key, artist_key) DO UPDATE SET
+          track_uri    = EXCLUDED.track_uri,
+          track_title  = EXCLUDED.track_title,
+          track_artist = EXCLUDED.track_artist,
+          track_album  = EXCLUDED.track_album,
+          confidence   = EXCLUDED.confidence,
+          checked_at   = now()
+    `;
 }

@@ -137,6 +137,21 @@ export interface TrackMatch {
     confidence: MatchConfidence;
 }
 
+/**
+ * The cache key for a song: normalised title and normalised PRIMARY artist.
+ *
+ * Primary artist, matching `searchQueries`, so a song cached from one ranking
+ * is found by another that credits it differently -- a seven-name soundtrack
+ * credit and a single-name one both reduce to the same key, which is the
+ * difference between reusing an answer and paying for it again.
+ */
+export function cacheKey(title: string, artist: string): { titleKey: string; artistKey: string } {
+    return {
+        titleKey: normalizeForMatch(title),
+        artistKey: normalizeForMatch(primaryArtist(artist)),
+    };
+}
+
 // --- pure: phrasing the query ---------------------------------------------
 
 /** Strips the characters Spotify's query parser treats as syntax, so a title
@@ -398,11 +413,23 @@ export const MATCH_SLICE = 10;
  * `startRank` offsets the rank numbers, because callers fetch a ranking in
  * slices (see the match route) and a slice starting at song 26 must report
  * ranks 26.. rather than 1...
+ *
+ * `onResult` fires as each answer lands, BEFORE the whole batch is known, and
+ * it exists because of how this fails in practice. A rate limit part-way
+ * through rejects this function, and a rejection discards every answer already
+ * paid for -- which is precisely the quota this feature is short of. With the
+ * callback the caller can bank each answer as it arrives, so a batch that dies
+ * on song eight has still learned seven songs permanently. Anything thrown
+ * from it propagates; keep it to remembering, not to work that can fail.
  */
 export async function matchTracks(
     songs: { title: string; artist: string }[],
     search: SpotifySearch,
-    options: { concurrency?: number; startRank?: number } = {}
+    options: {
+        concurrency?: number;
+        startRank?: number;
+        onResult?: (index: number, result: TrackMatch) => void;
+    } = {}
 ): Promise<TrackMatch[]> {
     const concurrency = Math.max(1, options.concurrency ?? MATCH_CONCURRENCY);
     const startRank = options.startRank ?? 1;
@@ -422,6 +449,7 @@ export async function matchTracks(
                 match,
                 confidence,
             };
+            options.onResult?.(index, out[index]);
         }
     }
 

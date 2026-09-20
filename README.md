@@ -70,6 +70,18 @@ round schedule would need.
   library or listening history — and tokens are encrypted before they're stored.
   Needs `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`; without them the feature
   hides itself entirely.
+
+  Spotify meters search **per application**, not per user, and an app on the default
+  development-mode quota runs out part-way through a long ranking and is then locked
+  out for a while. So the checking step is built to survive that rather than pretend
+  it won't happen: songs are checked a slice at a time with visible progress, every
+  answer is remembered server-side the moment it arrives — including the ones that
+  arrived just before a rate limit cut the batch short — and stopping, whether you
+  press the button or Spotify closes the door, keeps everything found so far and
+  offers a playlist of it. Coming back later carries on from where it stopped and
+  re-checks nothing, so progress only ever moves forward. A short wait is counted
+  down; a long lockout says how long and sends you away rather than hammering the
+  limit, which is what extends it.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
   always). Public ones show up on `/browse`, friends first. Take someone's song list as a
   **template**: it opens in the normal build screen, where you can add and remove songs, swap
@@ -273,11 +285,13 @@ AUTH_SECRET=anything node --experimental-strip-types --import ./scripts/register
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-parse.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-resolve.ts
 
-# Need a throwaway local Postgres; both refuse to run against a remote host.
+# Need a throwaway local Postgres; each refuses to run against a remote host.
 DATABASE_URL=postgres://... \
   node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-sharing.ts
 DATABASE_URL=postgres://... \
   node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-nodataloss.ts
+DATABASE_URL=postgres://... \
+  node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify-cache.ts
 ```
 
 `verify-ranking.ts` is the adaptive engine's proof: it plays rankings across a spread of
@@ -321,6 +335,17 @@ fail, it lands a karaoke version or a cover in somebody's playlist and the
 playlist looks entirely normal. That silent wrongness is why the old Spotify
 *import* was removed rather than fixed.
 
+`verify-spotify-cache.ts` covers the table that makes a second export free. Spotify meters
+search **per application**, and an app on a development-mode quota can be locked out for a
+long while after a big ranking — so a search result is the scarcest thing the export has.
+Every answer is remembered, including misses (learning "not on Spotify" costs the same
+request as learning the opposite), keyed by the song rather than by the user or the ranking,
+so one person's export of a soundtrack makes the next person's free. It asserts the half
+that saves quota — hits never expire, misses are re-checked after two weeks, a miss that
+later resolves overwrites rather than being ignored — and the half that would be worse than
+no cache at all: a different title or a different artist never inherits someone else's
+answer. Needs a real database, and refuses anything but localhost.
+
 `verify-spotify-auth.ts` covers the parts of the Spotify authorisation that
 decide whether a stolen database is also a stolen Spotify account, and whether a
 crafted callback can attach someone else's account to yours. Both fail silently
@@ -346,7 +371,7 @@ and none of which fails loudly if lost: an all-digit handle makes `/u/<handle>` 
 a user id, a reserved word lets someone be `@support`, and a case-sensitive comparison lets
 `@Sam` and `@sam` be two people.
 
-`verify-sharing.ts` is the one script that needs a real database, because what it checks *is*
+`verify-sharing.ts` needs a real database, because what it checks *is*
 the SQL: a missing `WHERE` clause doesn't throw, doesn't fail a type check and doesn't look
 wrong on screen — it just hands out a private ranking. It asserts every access boundary, that
 copying takes songs but not votes and leaves the original untouched, that email search can't
