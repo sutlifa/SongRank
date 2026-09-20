@@ -29,6 +29,8 @@ import {
     matchTracks,
     MATCH_CONCURRENCY,
     MAX_URIS_PER_REQUEST,
+    retryAfterSeconds,
+    SpotifyUnavailableError,
     type SpotifyTrack,
 } from "../lib/spotify.ts";
 
@@ -276,6 +278,41 @@ const slice = await matchTracks(
 check("a slice reports its real ranks", slice.map((m) => m.rank), [26, 27]);
 
 check("an empty list is fine", (await matchTracks([], staggered)).length, 0);
+
+// --- rate limiting -------------------------------------------------------
+//
+// Spotify meters this endpoint PER APPLICATION, and an app in development mode
+// has a small allowance -- so a long ranking really will be throttled partway
+// through. A 429 is a scheduling instruction, not a failure, and the only
+// useful response is to wait exactly as long as asked. Ignoring the header and
+// retrying sooner EXTENDS the penalty, which makes a wrong answer here
+// actively worse than doing nothing.
+const withHeader = (value: string | null) =>
+    ({ headers: { get: (name: string) => (name.toLowerCase() === "retry-after" ? value : null) } }) as Response;
+
+check("plain seconds are read", retryAfterSeconds(withHeader("30")), 30);
+check("zero is a real answer, not a missing one", retryAfterSeconds(withHeader("0")), 0);
+check("no header means no instruction", retryAfterSeconds(withHeader(null)), null);
+check("nonsense is not mistaken for a number", retryAfterSeconds(withHeader("soon")), null);
+// A limiter is allowed to ask for longer than anyone should block for; the cap
+// keeps a pathological value from parking the UI for an hour.
+check("an absurd wait is capped", retryAfterSeconds(withHeader("99999")), 300);
+check("a negative wait is refused", retryAfterSeconds(withHeader("-5")), null);
+// An HTTP-date form is legal and Spotify may use it.
+const inTwoMinutes = new Date(Date.now() + 120_000).toUTCString();
+const fromDate = retryAfterSeconds(withHeader(inTwoMinutes));
+check("an HTTP-date is understood", fromDate !== null && fromDate > 100 && fromDate <= 125, true);
+
+// The wait must survive the trip to the caller. It is the whole point: the
+// pause belongs in a browser, not inside a serverless function's budget.
+const limited = new SpotifyUnavailableError("HTTP 429", 30);
+check("the error carries the wait", limited.retryAfterSeconds, 30);
+check("...and the reason", limited.reason, "HTTP 429");
+check("an error with no instruction says so", new SpotifyUnavailableError("network error").retryAfterSeconds, null);
+
+// Concurrency is part of this: it was lowered after a real 429, and turning it
+// back up without an extended quota just moves where the limit lands.
+check("lookups stay gentle by default", MATCH_CONCURRENCY <= 2, true);
 
 if (failures.length > 0) {
     console.error(`\n${failures.length} of ${checks} checks FAILED:\n`);

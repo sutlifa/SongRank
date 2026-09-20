@@ -114,9 +114,20 @@ export async function POST(req: Request) {
             // string, never a token or a secret -- because the friendly
             // sentence alone left the first real failure undiagnosable without
             // reading a server log.
-            console.error("SPOTIFY MATCH UNAVAILABLE:", err.reason);
+            console.error("SPOTIFY MATCH UNAVAILABLE:", err.reason, "retryAfter:", err.retryAfterSeconds);
+            const limited = err.reason === "HTTP 429";
             return NextResponse.json(
-                { error: "Spotify didn't answer — try again in a moment.", reason: err.reason },
+                {
+                    error: limited
+                        ? "Spotify is rate-limiting this app — waiting before trying again."
+                        : "Spotify didn't answer — try again in a moment.",
+                    reason: err.reason,
+                    // How long Spotify asked us to wait. The client sits it
+                    // out and resumes the SAME slice, so the wait happens in a
+                    // browser rather than inside the function's duration
+                    // budget, and no matched songs are thrown away.
+                    retryAfter: err.retryAfterSeconds,
+                },
                 { status: 503 }
             );
         }

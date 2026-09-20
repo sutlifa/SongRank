@@ -33,6 +33,11 @@ interface Match {
     versionWarning: boolean;
 }
 
+/** How many rate-limit pauses one match walk will sit out before giving up.
+ * Enough to get a long ranking through a development-mode quota; few enough
+ * that a genuinely throttled app stops rather than looping forever. */
+const MAX_RATE_LIMIT_WAITS = 12;
+
 interface Review {
     name: string;
     songCount: number;
@@ -49,6 +54,8 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
     const [busy, setBusy] = useState<"matching" | "creating" | null>(null);
     /** How far through the ranking the match walk has got. */
     const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+    /** Seconds left on a rate-limit pause, or null when not waiting. */
+    const [waiting, setWaiting] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<{ url: string; added: number; requested: number; complete: boolean } | null>(null);
 
@@ -78,6 +85,10 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
             let offset = 0;
             let header: { name: string; songCount: number; matchupCount: number } | null = null;
 
+            // Rate-limit pauses this walk has already sat out. Bounded so a
+            // persistently throttled app eventually gives up and says so
+            // rather than looping until the tab is closed.
+            let waits = 0;
             for (;;) {
                 const res = await fetch("/api/spotify/match", {
                     method: "POST",
@@ -85,6 +96,24 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                     body: JSON.stringify({ tournamentId, offset }),
                 });
                 const data = await res.json();
+
+                // Spotify meters per application, and an app in development
+                // mode has a small allowance -- so a long ranking WILL be
+                // throttled partway through. That is a scheduling instruction,
+                // not a failure: wait exactly as long as asked and resume the
+                // same slice, keeping everything matched so far.
+                if (res.status === 503 && data.reason === "HTTP 429" && waits < MAX_RATE_LIMIT_WAITS) {
+                    waits += 1;
+                    const seconds = Math.min(Math.max(Number(data.retryAfter) || 5, 1), 60);
+                    setError(null);
+                    for (let left = seconds; left > 0; left--) {
+                        setWaiting(left);
+                        await new Promise((r) => setTimeout(r, 1000));
+                    }
+                    setWaiting(null);
+                    continue;
+                }
+
                 if (!res.ok) {
                     setError(
                         // The reason is an HTTP status or a network error, never
@@ -122,6 +151,7 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
             setError("Could not reach SongRank. Check your connection and try again.");
         } finally {
             setBusy(null);
+            setWaiting(null);
         }
     }
 
@@ -205,9 +235,11 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 {error && <p className="mb-3 text-sm text-danger">{error}</p>}
                 <button type="button" onClick={runMatch} disabled={busy !== null} className="btn-secondary">
                     {busy === "matching"
-                        ? progress
-                            ? `Checking songs… ${progress.done} of ${progress.total}`
-                            : "Checking songs…"
+                        ? waiting !== null
+                            ? `Spotify is busy — resuming in ${waiting}s`
+                            : progress
+                              ? `Checking songs… ${progress.done} of ${progress.total}`
+                              : "Checking songs…"
                         : "Check songs on Spotify"}
                 </button>
             </div>

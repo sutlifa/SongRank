@@ -55,11 +55,53 @@ export class SpotifyUnavailableError extends Error {
      * `node --experimental-strip-types`, which rejects that syntax. */
     readonly reason: string;
 
-    constructor(reason: string) {
+    /**
+     * Seconds Spotify asked us to wait, when it said so, else null.
+     *
+     * Carried all the way out to the caller on purpose. A rate limit is not a
+     * failure, it is a scheduling instruction, and the only useful response is
+     * to wait exactly as long as we were told -- which means the number has to
+     * survive the trip rather than being logged and dropped.
+     */
+    readonly retryAfterSeconds: number | null;
+
+    constructor(reason: string, retryAfterSeconds: number | null = null) {
         super(`Spotify request failed: ${reason}`);
         this.name = "SpotifyUnavailableError";
         this.reason = reason;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
+}
+
+/** Attempts per query, including the first. */
+const MAX_ATTEMPTS = 3;
+/** Base backoff, doubled per attempt, and overridden by `Retry-After`. */
+const RETRY_BASE_MS = 500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `Retry-After` in seconds, when the server sent a usable one.
+ *
+ * Honouring it matters more than any backoff curve: a limiter that says "wait
+ * thirty seconds" and gets asked again in half a second extends the penalty,
+ * so ignoring the header makes the problem it reports worse. Same reasoning as
+ * lib/itunes.ts's `retryAfterMs`, which this deliberately mirrors.
+ */
+export function retryAfterSeconds(res: Response): number | null {
+    const header = res.headers.get("retry-after");
+    if (!header) return null;
+    const seconds = Number(header);
+    // A header that is a NUMBER is answered as a number, full stop -- valid or
+    // not. Falling through to the date branch on a negative value let
+    // Date.parse("-5") succeed as a year, which came back as "wait zero
+    // seconds": an immediate retry against a limiter, which extends the
+    // penalty rather than serving it. No instruction (null) is the right
+    // answer to a malformed one, so the caller uses its own backoff.
+    if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds, 300) : null;
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.min(Math.max(Math.ceil((date - Date.now()) / 1000), 0), 300);
+    return null;
 }
 
 /** A track as this app cares about it, flattened out of Spotify's shape. */
@@ -286,13 +328,18 @@ export async function matchOne(
  * presented as "Spotify didn't answer" because the aborted fetch is
  * indistinguishable from an upstream that went quiet.
  *
- * Four rather than "all of them" because the endpoint is rate-limited per
- * application, not per user -- see lib/itunes.ts's UpstreamUnavailableError
- * comment for what a burst at a metered search endpoint did to this app once
- * already. Four is enough to turn minutes into seconds without becoming the
- * next incident.
+ * Two rather than "all of them", and it started at four. Spotify meters this
+ * endpoint PER APPLICATION rather than per user, and an app still in
+ * development mode -- which is where an app stays until its owner applies for
+ * an extended quota -- gets a much smaller allowance than a published one. At
+ * four, a real ranking earned an HTTP 429 partway through.
+ *
+ * Two plus honouring `Retry-After` (see apiSearch) is the combination that
+ * finishes. Turning it up again without an extended quota just moves where the
+ * 429 lands. See lib/itunes.ts's UpstreamUnavailableError comment for what a
+ * burst at a metered search endpoint already cost this app once.
  */
-export const MATCH_CONCURRENCY = 4;
+export const MATCH_CONCURRENCY = 2;
 
 /**
  * How many songs one match request handles.
@@ -352,24 +399,51 @@ export async function matchTracks(
 export function apiSearch(accessToken: string): SpotifySearch {
     return async (query, limit) => {
         const url = `${SPOTIFY_API}/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`;
-        let res: Response;
-        try {
-            res = await fetch(url, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                signal: AbortSignal.timeout(TIMEOUT_MS),
-            });
-        } catch (err) {
-            throw new SpotifyUnavailableError(err instanceof Error ? err.message : "network error");
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            let res: Response;
+            try {
+                res = await fetch(url, {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                    signal: AbortSignal.timeout(TIMEOUT_MS),
+                });
+            } catch (err) {
+                // A timeout or a dropped connection is worth another go; the
+                // last attempt tells the caller we never got an answer.
+                if (attempt === MAX_ATTEMPTS) {
+                    throw new SpotifyUnavailableError(err instanceof Error ? err.message : "network error");
+                }
+                await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+                continue;
+            }
+
+            if (res.ok) {
+                const body = (await res.json()) as { tracks?: { items?: RawTrack[] } };
+                return (body.tracks?.items ?? []).flatMap((raw) => {
+                    const track = toTrack(raw);
+                    return track ? [track] : [];
+                });
+            }
+
+            // 429 is the one that actually bites here, and 5xx is Spotify
+            // having a moment: both mean "ask again", not "no such song".
+            const retryable = res.status === 429 || res.status >= 500;
+            if (!retryable) {
+                // A genuine 4xx is us asking an unanswerable question --
+                // retrying it only spends the quota the next song needs. An
+                // empty result is the honest answer.
+                return [];
+            }
+            const wait = retryAfterSeconds(res);
+            if (attempt === MAX_ATTEMPTS) {
+                // The wait is handed up rather than swallowed so the caller
+                // can pause for exactly as long as Spotify asked, somewhere
+                // that isn't inside a serverless function's duration budget.
+                throw new SpotifyUnavailableError(`HTTP ${res.status}`, wait);
+            }
+            await sleep(wait !== null ? wait * 1000 : RETRY_BASE_MS * 2 ** (attempt - 1));
         }
-        if (res.status === 429 || res.status >= 500) {
-            throw new SpotifyUnavailableError(`HTTP ${res.status}`);
-        }
-        if (!res.ok) return [];
-        const body = (await res.json()) as { tracks?: { items?: RawTrack[] } };
-        return (body.tracks?.items ?? []).flatMap((raw) => {
-            const track = toTrack(raw);
-            return track ? [track] : [];
-        });
+        // Unreachable: the loop either returns or throws on its last attempt.
+        throw new SpotifyUnavailableError("exhausted retries");
     };
 }
 

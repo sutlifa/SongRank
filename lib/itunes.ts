@@ -98,7 +98,11 @@ function retryAfterMs(res: Response): number | null {
     const header = res.headers.get("retry-after");
     if (!header) return null;
     const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 10_000);
+    // See the matching comment in lib/spotify.ts: a numeric header is answered
+    // as a number either way. Falling through on a negative one let
+    // Date.parse("-5") succeed and produce an immediate retry, which extends
+    // the very penalty this function exists to serve.
+    if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds * 1000, 10_000) : null;
     const date = Date.parse(header);
     if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), 10_000);
     return null;
