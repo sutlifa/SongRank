@@ -60,6 +60,16 @@ round schedule would need.
   specific recording, so changing one after the fact would quietly rewrite what those votes
   meant.
 - **Export** — copy as text, download CSV, or download JSON.
+- **Send to Spotify** — turn a finished ranking into a playlist, in ranking order.
+  Two steps, always: the first works out what each song would become and writes
+  nothing, the second writes only what you ticked. Confident matches start ticked;
+  a near-miss or a suspected different version (same title, same artist, but a
+  karaoke or live recording) starts unticked and says so, because a plausible wrong
+  recording arriving silently is exactly why the old Spotify *import* was removed.
+  SongRank asks for the two playlist-writing scopes and nothing else — never your
+  library or listening history — and tokens are encrypted before they're stored.
+  Needs `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`; without them the feature
+  hides itself entirely.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
   always). Public ones show up on `/browse`, friends first. Take someone's song list as a
   **template**: it opens in the normal build screen, where you can add and remove songs, swap

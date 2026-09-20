@@ -314,3 +314,121 @@ export function apiSearch(accessToken: string): SpotifySearch {
         });
     };
 }
+
+// --- writing the playlist --------------------------------------------------
+
+/**
+ * A `spotify:track:...` uri, and nothing else.
+ *
+ * The review step sends back the uris the person accepted, so this is the
+ * boundary where client-supplied strings become something posted to somebody's
+ * account. Validating the shape is not paranoia about our own UI: the endpoint
+ * is reachable directly, and `spotify:playlist:...` or a crafted value has no
+ * business in an add-tracks call made on that person's behalf.
+ */
+const TRACK_URI = /^spotify:track:[A-Za-z0-9]{10,40}$/;
+export function isTrackUri(uri: unknown): uri is string {
+    return typeof uri === "string" && TRACK_URI.test(uri);
+}
+
+/** Drops anything that isn't a track uri, preserving order and dropping
+ * duplicates -- Spotify accepts duplicates, but a ranking cannot contain the
+ * same song twice, so one arriving means something upstream is wrong and
+ * silently writing it twice is not a kindness. */
+export function cleanUris(input: unknown[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of input) {
+        if (!isTrackUri(value) || seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+    }
+    return out;
+}
+
+export interface CreatedPlaylist {
+    id: string;
+    url: string;
+}
+
+/**
+ * Creates an empty playlist on someone's account.
+ *
+ * Private by default and the caller must opt into public, matching how a
+ * ranking itself behaves in this app (see `visibility` in lib/db/schema.sql):
+ * exporting is about getting a list you can play, not about publishing it, and
+ * a feature that quietly posts to somebody's public profile is one they only
+ * find out about from a friend.
+ */
+export async function createPlaylist(
+    accessToken: string,
+    spotifyUserId: string,
+    name: string,
+    description: string,
+    isPublic = false
+): Promise<CreatedPlaylist | null> {
+    try {
+        const res = await fetch(`${SPOTIFY_API}/users/${encodeURIComponent(spotifyUserId)}/playlists`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ name, description, public: isPublic }),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        if (!res.ok) {
+            console.error("SPOTIFY CREATE PLAYLIST ERROR:", res.status, await res.text().catch(() => ""));
+            return null;
+        }
+        const data = (await res.json()) as { id?: string; external_urls?: { spotify?: string } };
+        if (!data.id) return null;
+        return { id: data.id, url: data.external_urls?.spotify ?? `https://open.spotify.com/playlist/${data.id}` };
+    } catch (err) {
+        console.error("SPOTIFY CREATE PLAYLIST ERROR:", err);
+        return null;
+    }
+}
+
+/**
+ * Adds tracks to a playlist, in order.
+ *
+ * SEQUENTIAL, deliberately. Order is the entire deliverable -- the playlist IS
+ * the ranking -- and concurrent batches would interleave into something
+ * roughly, but not exactly, right: the kind of wrong that is very hard to spot
+ * and impossible to explain afterwards.
+ *
+ * Returns how many tracks made it. A partial result is reported honestly
+ * rather than thrown away, because the playlist already exists at that point
+ * and telling someone "it failed" when 180 of their 200 songs are sitting in
+ * it would send them looking for a playlist they already have.
+ */
+export async function addTracks(
+    accessToken: string,
+    playlistId: string,
+    uris: string[]
+): Promise<{ added: number; complete: boolean }> {
+    let added = 0;
+    for (const batch of batchUris(uris)) {
+        try {
+            const res = await fetch(`${SPOTIFY_API}/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ uris: batch }),
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+            });
+            if (!res.ok) {
+                console.error("SPOTIFY ADD TRACKS ERROR:", res.status, await res.text().catch(() => ""));
+                return { added, complete: false };
+            }
+            added += batch.length;
+        } catch (err) {
+            console.error("SPOTIFY ADD TRACKS ERROR:", err);
+            return { added, complete: false };
+        }
+    }
+    return { added, complete: true };
+}
+
+/** The description written onto the playlist. Says where it came from, because
+ * in six months nobody remembers why a playlist is in that order. */
+export function playlistDescription(rankingName: string, songCount: number, matchupCount: number): string {
+    return `${rankingName} — ranked on SongRank from ${matchupCount} head-to-head picks across ${songCount} songs.`;
+}

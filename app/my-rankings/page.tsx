@@ -4,6 +4,7 @@ import { hasDatabase } from "@/lib/db";
 import { hasGoogleCredentials, isAuthConfigured } from "@/lib/authConfig";
 import MyRankings from "@/components/MyRankings";
 import DeleteAccountControl from "@/components/DeleteAccountControl";
+import SpotifyConnection from "@/components/SpotifyConnection";
 import UsernameControl from "@/components/UsernameControl";
 import { getUsername } from "@/lib/users";
 import { listTournaments, listDeletedTournaments, getTopCuts } from "@/lib/queries";
@@ -103,6 +104,7 @@ export default async function MyRankingsPage() {
             </div>
             <MyRankings initial={live} initialDeleted={gone} details={details} />
             <div className="mx-auto max-w-3xl px-4 pb-10 sm:px-6">
+                <SpotifyConnection />
                 <DeleteAccountControl />
             </div>
         </>

@@ -22,6 +22,9 @@ import {
     isConfident,
     versionMismatch,
     batchUris,
+    isTrackUri,
+    cleanUris,
+    playlistDescription,
     matchOne,
     matchTracks,
     MAX_URIS_PER_REQUEST,
@@ -119,6 +122,48 @@ check("order is preserved across batches", batchUris(uris).flat(), uris);
 check("exactly one full batch is one batch", batchUris(uris.slice(0, 100)).length, 1);
 check("empty input", batchUris([]), []);
 check("the limit is Spotify's", MAX_URIS_PER_REQUEST, 100);
+
+// --- what may be written to somebody's account ---------------------------
+// The review screen sends back the uris the person accepted, so this is the
+// boundary where a client-supplied string becomes a write on their Spotify
+// account. The endpoint is reachable directly, so the shape is checked rather
+// than trusted.
+check("a track uri is accepted", isTrackUri("spotify:track:4cOdK2wGLETKBW3PvgPWqT"), true);
+check("a playlist uri is not a track", isTrackUri("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"), false);
+check("an album uri is not a track", isTrackUri("spotify:album:4cOdK2wGLETKBW3PvgPWqT"), false);
+check("an episode uri is not a track", isTrackUri("spotify:episode:4cOdK2wGLETKBW3PvgPWqT"), false);
+check("a web url is not a uri", isTrackUri("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"), false);
+// A comma-smuggled second uri must not pass as one value.
+check("a smuggled second uri is refused", isTrackUri("spotify:track:abc,spotify:playlist:x"), false);
+check("empty is refused", isTrackUri(""), false);
+check("a number is refused", isTrackUri(42), false);
+check("null is refused", isTrackUri(null), false);
+
+check(
+    "cleanUris keeps only valid ones, in order",
+    cleanUris([
+        "spotify:track:aaaaaaaaaaaaaaaaaaaaaa",
+        "spotify:playlist:bbbbbbbbbbbbbbbbbbbbbb",
+        "spotify:track:cccccccccccccccccccccc",
+        null,
+        7,
+    ]),
+    ["spotify:track:aaaaaaaaaaaaaaaaaaaaaa", "spotify:track:cccccccccccccccccccccc"]
+);
+// A ranking cannot contain the same song twice, so a duplicate arriving means
+// something upstream is wrong; writing it twice is not a kindness.
+check(
+    "duplicates are dropped",
+    cleanUris(["spotify:track:aaaaaaaaaaaaaaaaaaaaaa", "spotify:track:aaaaaaaaaaaaaaaaaaaaaa"]).length,
+    1
+);
+check("nothing valid yields nothing", cleanUris(["spotify:playlist:x", null]), []);
+
+check(
+    "the description says where the playlist came from",
+    playlistDescription("Disney", 200, 1911),
+    "Disney — ranked on SongRank from 1911 head-to-head picks across 200 songs."
+);
 
 // --- the ladder, end to end against a fake catalogue ----------------------
 const CATALOGUE: SpotifyTrack[] = [

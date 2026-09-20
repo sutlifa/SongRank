@@ -11,6 +11,7 @@ import ExportPanel from "./ExportPanel";
 import EditableTournamentName from "./EditableTournamentName";
 import { useTournamentLoader } from "./useTournamentLoader";
 import VisibilityToggle from "./VisibilityToggle";
+import SpotifyExport from "./SpotifyExport";
 import type { Visibility } from "@/lib/queries";
 
 /**
@@ -132,6 +133,15 @@ export default function ResultsView({
 
             <div className="mb-6">
                 <ExportPanel tournamentName={tournament.name} ranked={ranked} />
+            </div>
+
+            {/* Below the plain exports, not beside them: copy/CSV/JSON work
+                with no account and no configuration, and this needs both. It
+                renders nothing when Spotify isn't configured on the
+                deployment, so the section simply isn't there rather than
+                being a button that leads to an error. */}
+            <div className="mb-6">
+                <SpotifyExport tournamentId={id} />
             </div>
 
             {/* Below the export panel, directly above the list it filters --
