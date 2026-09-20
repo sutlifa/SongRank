@@ -23,13 +23,19 @@ function slugify(name: string): string {
 
 /**
  * Every export here works with no configuration and no account -- copy/CSV/
- * JSON are just the `ranked` array reformatted client-side. There used to be
- * a fourth option, a direct Spotify playlist export, but Spotify's API
- * blocks import of its own editorial playlists, a user-created public
- * playlist also failed to import, and export needed a full OAuth dance plus
- * a 25-user development-mode cap and a quota review to lift it -- not worth
- * the surface area for what it bought. Removed rather than fixed; see
- * AGENT-TEAM.md's history for the full reasoning if this ever comes up again.
+ * JSON are just the `ranked` array reformatted client-side, which is the
+ * property worth protecting: a signed-out person with a finished ranking can
+ * always get it out.
+ *
+ * A direct Spotify playlist export was tried twice and removed twice. The
+ * second attempt was a complete, working feature -- OAuth, a match-review
+ * step, an answer cache -- and it still could not be used, because Spotify
+ * meters search per application and the development-mode quota is exhausted
+ * by one long ranking and then locked out for most of a day. Lifting it is a
+ * review Spotify may not grant. So the playlist is built elsewhere now; see
+ * components/PlaylistHandoff.tsx, which renders below this.
+ *
+ * If a third attempt is ever tempting: the blocker was never the code.
  */
 export default function ExportPanel({
     tournamentName,

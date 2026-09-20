@@ -4,11 +4,14 @@
 // to manage) rather than Spotify's Web API. Spotify removed `preview_url`
 // from track objects for apps created after Nov 2024, so as of 2026 it
 // simply cannot supply a 30-second clip -- iTunes still can, and still does.
-// SongRank no longer talks to Spotify at all (the playlist import/export
-// integration was removed -- editorial playlists are blocked from
-// third-party apps, a user-created public playlist also failed to import,
-// and export needed a full OAuth dance plus a 25-user cap and a quota
-// review to lift), so iTunes is now the only external source in the app.
+// SongRank does not talk to Spotify at all. Both halves of that integration
+// were tried and removed: import, because editorial playlists are blocked
+// from third-party apps and a user-created public one failed too; and export,
+// because Spotify meters search per APPLICATION and the development-mode
+// quota is spent by a single long ranking, locking the app out for most of a
+// day. A finished ranking is handed to a playlist converter instead (see
+// components/PlaylistHandoff.tsx), so iTunes is the only external source
+// left in the app.
 //
 // Every call here runs server-side only (from /api/songs/search,
 // /api/songs/resolve and /api/songs/suggest), never from the browser --
@@ -98,10 +101,15 @@ function retryAfterMs(res: Response): number | null {
     const header = res.headers.get("retry-after");
     if (!header) return null;
     const seconds = Number(header);
-    // See the matching comment in lib/spotify.ts: a numeric header is answered
-    // as a number either way. Falling through on a negative one let
-    // Date.parse("-5") succeed and produce an immediate retry, which extends
-    // the very penalty this function exists to serve.
+    // A numeric header is answered as a number either way, valid or not.
+    // Falling through to the date branch on a negative one let
+    // Date.parse("-5") succeed as a year and produce an immediate retry,
+    // which extends the very penalty this function exists to serve.
+    //
+    // The cap is fine HERE, unlike in the Spotify client this once mirrored:
+    // this value is only ever slept on, never shown to anyone. Capping a
+    // number that a person reads as "come back in N minutes" is what made a
+    // 23-hour lockout announce itself as five minutes.
     if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds * 1000, 10_000) : null;
     const date = Date.parse(header);
     if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), 10_000);

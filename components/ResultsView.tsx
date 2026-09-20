@@ -11,7 +11,7 @@ import ExportPanel from "./ExportPanel";
 import EditableTournamentName from "./EditableTournamentName";
 import { useTournamentLoader } from "./useTournamentLoader";
 import VisibilityToggle from "./VisibilityToggle";
-import SpotifyExport from "./SpotifyExport";
+import PlaylistHandoff from "./PlaylistHandoff";
 import type { Visibility } from "@/lib/queries";
 
 /**
@@ -135,13 +135,12 @@ export default function ResultsView({
                 <ExportPanel tournamentName={tournament.name} ranked={ranked} />
             </div>
 
-            {/* Below the plain exports, not beside them: copy/CSV/JSON work
-                with no account and no configuration, and this needs both. It
-                renders nothing when Spotify isn't configured on the
-                deployment, so the section simply isn't there rather than
-                being a button that leads to an error. */}
+            {/* Below the plain exports, because it IS one -- the same list,
+                formatted for something that has to search for each song
+                again. It stands apart from the panel above because the flow
+                is different: copy here, finish somewhere else. */}
             <div className="mb-6">
-                <SpotifyExport tournamentId={id} />
+                <PlaylistHandoff ranked={ranked} />
             </div>
 
             {/* Below the export panel, directly above the list it filters --

@@ -231,83 +231,22 @@ CREATE INDEX IF NOT EXISTS notifications_unread_idx
   WHERE read_at IS NULL;
 
 -- ---------------------------------------------------------------------------
--- Spotify playlist export
+-- Removed: spotify_accounts, spotify_track_matches
 -- ---------------------------------------------------------------------------
-
--- Authorisation to write playlists on one person's Spotify account.
 --
--- One row per SongRank user, keyed by our own user id: Spotify is a
--- capability here, not an identity. Nobody signs in with it and nobody's
--- account IS it, so this deliberately does not touch auth.ts, which stays
--- Google-only with a JWT session and no database adapter. Disconnecting is
--- then just deleting a row, with no question about what it does to a session.
+-- SongRank built Spotify playlists directly for a while. That needed an OAuth
+-- connection (spotify_accounts, tokens encrypted at rest) and a shared cache of
+-- song-to-track answers (spotify_track_matches), because Spotify meters search
+-- per APPLICATION and an app on the development-mode quota is locked out for
+-- most of a day after one long ranking. The code was correct; the quota made it
+-- unusable, and lifting it is a review Spotify may not grant. The results page
+-- now hands the list to a converter (Soundiiz, TuneMyMusic) instead, which
+-- needs no account, no tokens and no table.
 --
--- The tokens are stored ENCRYPTED (see lib/spotifyAuth.ts), not as Spotify
--- returned them. A refresh token does not expire: anyone holding one can mint
--- access tokens and write to that account indefinitely, so this column is a
--- live credential and a database dump would be a credential leak. Neon
--- encrypts at rest, which protects the disk but not a dump, a stray backup, or
--- anything that gets query access. The encryption key is derived from
--- AUTH_SECRET, which lives in the environment and is NOT in the database, so
--- neither half is useful alone.
+-- These CREATE statements are gone rather than commented out, so a fresh
+-- database never grows them. An EXISTING database still has both tables; they
+-- are inert, and dropping them is a decision for whoever owns that data, not
+-- something a migration should do behind their back. To drop them by hand:
 --
--- Rotating AUTH_SECRET therefore invalidates every row here. That is the
--- correct trade and it fails safely -- decryption returns null and the person
--- is asked to reconnect, which is an ordinary recoverable state rather than an
--- error.
-CREATE TABLE IF NOT EXISTS spotify_accounts (
-  user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  -- The authorised account's own Spotify id, needed to create a playlist
-  -- under it. Not a secret, and not encrypted.
-  spotify_user_id    TEXT NOT NULL,
-  access_token_enc   TEXT NOT NULL,
-  refresh_token_enc  TEXT NOT NULL,
-  -- When the ACCESS token stops working. The refresh token has no expiry,
-  -- which is exactly why it is the valuable half.
-  expires_at         TIMESTAMPTZ NOT NULL,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Remembered answers to "what is this song on Spotify".
---
--- Spotify meters search per APPLICATION, and an app in development mode gets a
--- small allowance -- small enough that a long ranking exhausts it and the app
--- is locked out for a while afterwards. Under that constraint a search result
--- is not a cheap thing to fetch again; it is the scarcest resource the feature
--- has. So every answer is kept, and no song is ever looked up twice.
---
--- SHARED ACROSS USERS ON PURPOSE, and keyed by the song rather than by the
--- ranking or the person. "Let It Go by Idina Menzel" resolves to the same
--- Spotify track whoever is asking -- it is public catalogue data, not anything
--- about a user -- so one person exporting a Disney ranking makes the next
--- person's export of the same songs free. That is the difference between the
--- quota being spent once and being spent per person per attempt.
---
--- Keys are normalised (see normalizeForMatch in lib/parse.ts, and
--- primaryArtist in lib/itunes.ts) so trivial differences in punctuation,
--- casing or a long credit string all land on the same row.
-CREATE TABLE IF NOT EXISTS spotify_track_matches (
-  -- normalizeForMatch(title)
-  title_key     TEXT NOT NULL,
-  -- normalizeForMatch(primaryArtist(artist)); '' when the song has no artist.
-  artist_key    TEXT NOT NULL,
-  -- NULL means a remembered MISS: Spotify was asked and had nothing. Worth
-  -- storing precisely because it cost a request to learn, and re-learning it
-  -- costs another one.
-  track_uri     TEXT,
-  track_title   TEXT,
-  track_artist  TEXT,
-  track_album   TEXT,
-  -- 'high' | 'partial' | 'none', as scoreCandidate returned it.
-  confidence    TEXT NOT NULL,
-  checked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (title_key, artist_key)
-);
-
--- Misses are re-checked after a while (a track really can be added to the
--- catalogue later); hits are not, because a track that exists keeps existing.
--- The index serves the sweep that finds stale misses.
-CREATE INDEX IF NOT EXISTS spotify_track_matches_stale_idx
-  ON spotify_track_matches (checked_at)
-  WHERE track_uri IS NULL;
+--     DROP TABLE IF EXISTS spotify_track_matches;
+--     DROP TABLE IF EXISTS spotify_accounts;

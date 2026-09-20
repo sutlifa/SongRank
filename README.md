@@ -60,28 +60,23 @@ round schedule would need.
   specific recording, so changing one after the fact would quietly rewrite what those votes
   meant.
 - **Export** — copy as text, download CSV, or download JSON.
-- **Send to Spotify** — turn a finished ranking into a playlist, in ranking order.
-  Two steps, always: the first works out what each song would become and writes
-  nothing, the second writes only what you ticked. Confident matches start ticked;
-  a near-miss or a suspected different version (same title, same artist, but a
-  karaoke or live recording) starts unticked and says so, because a plausible wrong
-  recording arriving silently is exactly why the old Spotify *import* was removed.
-  SongRank asks for the two playlist-writing scopes and nothing else — never your
-  library or listening history — and tokens are encrypted before they're stored.
-  Needs `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`; without them the feature
-  hides itself entirely.
+- **Turn it into a playlist** — copy the ranking as `Title - Artist`, one per line, and
+  paste it into [Soundiiz](https://soundiiz.com/) or
+  [TuneMyMusic](https://www.tunemymusic.com/), which build the playlist on Spotify,
+  Apple Music, YouTube Music or wherever you listen. Line order carries the ranking, so
+  the playlist comes out in order. Nothing is sent anywhere by SongRank — you paste it
+  yourself.
 
-  Spotify meters search **per application**, not per user, and an app on the default
-  development-mode quota runs out part-way through a long ranking and is then locked
-  out for a while. So the checking step is built to survive that rather than pretend
-  it won't happen: songs are checked a slice at a time with visible progress, every
-  answer is remembered server-side the moment it arrives — including the ones that
-  arrived just before a rate limit cut the batch short — and stopping, whether you
-  press the button or Spotify closes the door, keeps everything found so far and
-  offers a playlist of it. Coming back later carries on from where it stopped and
-  re-checks nothing, so progress only ever moves forward. A short wait is counted
-  down; a long lockout says how long and sends you away rather than hammering the
-  limit, which is what extends it.
+  This replaced a real Spotify integration, and the reason is worth recording. SongRank
+  built the playlist directly for a while: OAuth, encrypted tokens, a match-review step
+  so no wrong recording could land silently, and a shared cache of song-to-track answers.
+  It worked. It was still unusable, because Spotify meters search **per application**
+  rather than per user, and an app on the default development-mode quota is exhausted by
+  one two-hundred-song ranking and then locked out for the best part of a day. Lifting
+  that is a quota review Spotify may or may not grant. Carrying an account connection,
+  two database tables and an OAuth redirect URI on the hope of an approval was the wrong
+  trade, so it came out. The handoff above needs no account, no configuration and no
+  quota, and it works for every music service instead of one.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
   always). Public ones show up on `/browse`, friends first. Take someone's song list as a
   **template**: it opens in the normal build screen, where you can add and remove songs, swap
@@ -280,18 +275,14 @@ node --experimental-strip-types scripts/verify-compare.ts
 node --experimental-strip-types scripts/verify-username.ts
 node --experimental-strip-types scripts/verify-filter.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-fuzzy.ts
-node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify.ts
-AUTH_SECRET=anything node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify-auth.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-parse.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-resolve.ts
 
-# Need a throwaway local Postgres; each refuses to run against a remote host.
+# Need a throwaway local Postgres; both refuse to run against a remote host.
 DATABASE_URL=postgres://... \
   node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-sharing.ts
 DATABASE_URL=postgres://... \
   node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-nodataloss.ts
-DATABASE_URL=postgres://... \
-  node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify-cache.ts
 ```
 
 `verify-ranking.ts` is the adaptive engine's proof: it plays rankings across a spread of
@@ -326,33 +317,6 @@ results, in both directions: real misspellings are forgiven (`chicken`/`chickin`
 different words are not (`love`/`live`). Its end-to-end case asserts a *confident* match
 rather than merely "not a miss", because the weaker assertion passed with fuzzy matching
 removed entirely and proved nothing.
-
-`verify-spotify.ts` covers the half of the Spotify playlist export that can be
-tested without Spotify -- query phrasing, response parsing, candidate choice and
-batching. The API itself is unreachable from some sandboxes, so the HTTP is only
-exercised by a real run. It matters more than it looks: a wrong match doesn't
-fail, it lands a karaoke version or a cover in somebody's playlist and the
-playlist looks entirely normal. That silent wrongness is why the old Spotify
-*import* was removed rather than fixed.
-
-`verify-spotify-cache.ts` covers the table that makes a second export free. Spotify meters
-search **per application**, and an app on a development-mode quota can be locked out for a
-long while after a big ranking — so a search result is the scarcest thing the export has.
-Every answer is remembered, including misses (learning "not on Spotify" costs the same
-request as learning the opposite), keyed by the song rather than by the user or the ranking,
-so one person's export of a soundtrack makes the next person's free. It asserts the half
-that saves quota — hits never expire, misses are re-checked after two weeks, a miss that
-later resolves overwrites rather than being ignored — and the half that would be worse than
-no cache at all: a different title or a different artist never inherits someone else's
-answer. Needs a real database, and refuses anything but localhost.
-
-`verify-spotify-auth.ts` covers the parts of the Spotify authorisation that
-decide whether a stolen database is also a stolen Spotify account, and whether a
-crafted callback can attach someone else's account to yours. Both fail silently
-when wrong -- encryption that doesn't authenticate still round-trips, and a
-state check that always passes still completes a normal login -- so it asserts
-the negative cases specifically: tampered ciphertext is refused, a *missing*
-CSRF state never counts as a match, and the grant stays at exactly two scopes.
 
 `verify-starters.ts` checks the hand-typed data in `lib/starterLists.ts`, where every way of
 being wrong is silent: a duplicate id hides a list behind another, a song repeated inside a
