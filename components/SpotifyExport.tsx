@@ -52,12 +52,20 @@ const MAX_RATE_LIMIT_WAITS = 40;
  */
 const LONG_LOCKOUT_SECONDS = 120;
 
-/** "in about 25 minutes", "in about 2 hours" -- a number nobody has to convert. */
+/**
+ * "in about 25 minutes", "in about 2 hours" -- a number nobody has to convert.
+ *
+ * Rounds UP to the coarser unit rather than down ("60 minutes" reads as
+ * something to sit through; "1 hour" reads as something to leave and come back
+ * from), and an in-between wait is rounded generously for the same reason the
+ * number is no longer capped: sending someone back before the door opens is
+ * the failure this sentence exists to avoid.
+ */
 function describeWait(seconds: number): string {
     if (seconds < 90) return `in about ${Math.round(seconds)} seconds`;
     const minutes = Math.round(seconds / 60);
-    if (minutes < 90) return `in about ${minutes} minute${minutes === 1 ? "" : "s"}`;
-    const hours = Math.round(minutes / 60);
+    if (minutes < 60) return `in about ${minutes} minutes`;
+    const hours = Math.ceil(minutes / 60);
     return `in about ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 

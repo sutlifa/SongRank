@@ -356,14 +356,30 @@ check("plain seconds are read", retryAfterSeconds(withHeader("30")), 30);
 check("zero is a real answer, not a missing one", retryAfterSeconds(withHeader("0")), 0);
 check("no header means no instruction", retryAfterSeconds(withHeader(null)), null);
 check("nonsense is not mistaken for a number", retryAfterSeconds(withHeader("soon")), null);
-// A limiter is allowed to ask for longer than anyone should block for; the cap
-// keeps a pathological value from parking the UI for an hour.
-check("an absurd wait is capped", retryAfterSeconds(withHeader("99999")), 300);
+// A limiter is allowed to ask for longer than anyone should block for, and the
+// answer must say so RATHER THAN a comfortable number.
+//
+// This is the check that was wrong, and wrong in the direction that matters.
+// It used to assert a cap of 300 seconds, which turned every real lockout into
+// "come back in about 5 minutes" on screen -- so someone waited five minutes,
+// tried again, was told five minutes again, and reasonably concluded the app
+// was broken. Whether a wait is short enough to sleep on is a SEPARATE
+// question, decided by MAX_INLINE_WAIT_MS, and collapsing the two is what
+// produced a sentence that could never come true.
+check("an hour means an hour, not a comfortable five minutes", retryAfterSeconds(withHeader("3600")), 3600);
+check("...and half a day means half a day", retryAfterSeconds(withHeader("43200")), 43200);
+// Bounded only against nonsense, so nothing renders "in about 400 years".
+check("a preposterous wait is still bounded", retryAfterSeconds(withHeader("99999999")), 24 * 60 * 60);
 check("a negative wait is refused", retryAfterSeconds(withHeader("-5")), null);
 // An HTTP-date form is legal and Spotify may use it.
 const inTwoMinutes = new Date(Date.now() + 120_000).toUTCString();
 const fromDate = retryAfterSeconds(withHeader(inTwoMinutes));
 check("an HTTP-date is understood", fromDate !== null && fromDate > 100 && fromDate <= 125, true);
+// The date form has to survive the same way the seconds form does: an hour
+// away is an hour, not a capped five minutes.
+const inAnHour = new Date(Date.now() + 3_600_000).toUTCString();
+const hourFromDate = retryAfterSeconds(withHeader(inAnHour));
+check("a distant HTTP-date is not clamped either", hourFromDate !== null && hourFromDate > 3500, true);
 
 // The wait must survive the trip to the caller. It is the whole point: the
 // pause belongs in a browser, not inside a serverless function's budget.

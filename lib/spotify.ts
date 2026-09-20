@@ -90,12 +90,32 @@ const MAX_INLINE_WAIT_MS = 2000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * The longest `Retry-After` worth believing.
+ *
+ * Only a sanity bound on a broken or hostile header, so nothing can render
+ * "come back in about 400 years". It is deliberately far larger than any wait
+ * this app would sit through, because the number's job is to be REPORTED
+ * accurately, not to be slept on -- see `retryAfterSeconds`.
+ */
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
+
+/**
  * `Retry-After` in seconds, when the server sent a usable one.
  *
  * Honouring it matters more than any backoff curve: a limiter that says "wait
  * thirty seconds" and gets asked again in half a second extends the penalty,
  * so ignoring the header makes the problem it reports worse. Same reasoning as
  * lib/itunes.ts's `retryAfterMs`, which this deliberately mirrors.
+ *
+ * REPORTED AS SENT, not clamped to something comfortable. This used to cap the
+ * answer at 300 seconds, which was harmless while the only question being
+ * asked was "may we sleep on this here?" -- the answer was no either way, and
+ * MAX_INLINE_WAIT_MS below decides that independently. It stopped being
+ * harmless once the number was also shown to a person as "come back in about
+ * five minutes": a real lockout of an hour was reported as five minutes, so
+ * someone waited five, tried again, got the same capped five, and concluded
+ * the app was stuck. It was telling them to come back before the door opened
+ * and then blaming them for finding it shut.
  */
 export function retryAfterSeconds(res: Response): number | null {
     const header = res.headers.get("retry-after");
@@ -107,9 +127,11 @@ export function retryAfterSeconds(res: Response): number | null {
     // seconds": an immediate retry against a limiter, which extends the
     // penalty rather than serving it. No instruction (null) is the right
     // answer to a malformed one, so the caller uses its own backoff.
-    if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds, 300) : null;
+    if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds, MAX_RETRY_AFTER_SECONDS) : null;
     const date = Date.parse(header);
-    if (Number.isFinite(date)) return Math.min(Math.max(Math.ceil((date - Date.now()) / 1000), 0), 300);
+    if (Number.isFinite(date)) {
+        return Math.min(Math.max(Math.ceil((date - Date.now()) / 1000), 0), MAX_RETRY_AFTER_SECONDS);
+    }
     return null;
 }
 
