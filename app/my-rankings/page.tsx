@@ -5,6 +5,8 @@ import { hasGoogleCredentials, isAuthConfigured } from "@/lib/authConfig";
 import MyRankings from "@/components/MyRankings";
 import DeleteAccountControl from "@/components/DeleteAccountControl";
 import SpotifyConnection from "@/components/SpotifyConnection";
+import SpotifyCallbackNotice from "@/components/SpotifyCallbackNotice";
+import { Suspense } from "react";
 import UsernameControl from "@/components/UsernameControl";
 import { getUsername } from "@/lib/users";
 import { listTournaments, listDeletedTournaments, getTopCuts } from "@/lib/queries";
@@ -97,6 +99,12 @@ export default async function MyRankingsPage() {
     return (
         <>
             <div className="mx-auto max-w-2xl px-4 pt-6 sm:px-6 sm:pt-8">
+                {/* Suspense because it reads searchParams, which opts a client
+                    component into bailing out of prerendering unless it sits
+                    behind a boundary. */}
+                <Suspense fallback={null}>
+                    <SpotifyCallbackNotice />
+                </Suspense>
                 <UsernameControl
                     current={username}
                     suggestion={suggestUsername(session.user.name ?? session.user.email)}
