@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * "Send to Spotify", on a finished ranking.
@@ -51,6 +51,23 @@ interface Review {
 export default function SpotifyExport({ tournamentId }: { tournamentId: string }) {
     const [status, setStatus] = useState<{ configured: boolean; connected: boolean } | null>(null);
     const [review, setReview] = useState<Review | null>(null);
+    /**
+     * Everything matched so far, kept ACROSS attempts.
+     *
+     * A development-mode Spotify quota throttles a long ranking to a trickle
+     * and can keep doing it. Ninety-five songs of a two-hundred-song ranking
+     * were being matched and then thrown away when the walk gave up, so the
+     * only options were "wait indefinitely" or "lose it all". Progress now
+     * survives: the walk resumes from where it stopped, and whatever has been
+     * found can be turned into a playlist at any point.
+     */
+    const [collected, setCollected] = useState<Match[]>([]);
+    /** Ranking-wide totals, learned from the first slice that came back. */
+    const [header, setHeader] = useState<{ name: string; songCount: number; matchupCount: number; total: number } | null>(null);
+    /** Set when the walk stopped early, so the UI can offer to carry on. */
+    const [stoppedEarly, setStoppedEarly] = useState(false);
+    /** Lets a person bail out of the waiting without losing what was found. */
+    const stopRef = useRef(false);
     /** Which ranks the person has chosen to include. Seeded from the match
      * confidence -- see the effect below. */
     const [accepted, setAccepted] = useState<Set<number>>(new Set());
@@ -79,37 +96,46 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
      * identical from inside. Slices also mean there is honest progress to show
      * instead of a button that sits there for a minute.
      */
-    async function runMatch() {
+    async function runMatch(resume = false) {
         setBusy("matching");
         setError(null);
-        setProgress(null);
-        try {
-            const collected: Match[] = [];
-            let offset = 0;
-            let header: { name: string; songCount: number; matchupCount: number } | null = null;
+        setStoppedEarly(false);
+        stopRef.current = false;
 
-            // Rate-limit pauses this walk has already sat out. Bounded so a
-            // persistently throttled app eventually gives up and says so
-            // rather than looping until the tab is closed.
-            let waits = 0;
+        // Resuming continues from what is already matched; starting over
+        // clears it. Either way `found` is the single source of truth, so a
+        // stop at any point leaves usable results behind.
+        const found: Match[] = resume ? [...collected] : [];
+        if (!resume) setCollected([]);
+        let waits = 0;
+
+        try {
             for (;;) {
+                if (stopRef.current) {
+                    setStoppedEarly(true);
+                    break;
+                }
                 const res = await fetch("/api/spotify/match", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ tournamentId, offset }),
+                    body: JSON.stringify({ tournamentId, offset: found.length }),
                 });
                 const data = await res.json();
 
-                // Spotify meters per application, and an app in development
-                // mode has a small allowance -- so a long ranking WILL be
-                // throttled partway through. That is a scheduling instruction,
-                // not a failure: wait exactly as long as asked and resume the
-                // same slice, keeping everything matched so far.
-                if (res.status === 503 && data.reason === "HTTP 429" && waits < MAX_RATE_LIMIT_WAITS) {
+                // A rate limit is a scheduling instruction, not a failure:
+                // wait exactly as long as asked and resume the same slice.
+                if (res.status === 503 && data.reason === "HTTP 429") {
+                    if (waits >= MAX_RATE_LIMIT_WAITS) {
+                        setStoppedEarly(true);
+                        setError(
+                            "Spotify is still rate-limiting this app. Everything found so far is kept — you can make a playlist from it now, or carry on checking."
+                        );
+                        break;
+                    }
                     waits += 1;
                     const seconds = Math.min(Math.max(Number(data.retryAfter) || 5, 1), 60);
                     setError(null);
-                    for (let left = seconds; left > 0; left--) {
+                    for (let left = seconds; left > 0 && !stopRef.current; left--) {
                         setWaiting(left);
                         await new Promise((r) => setTimeout(r, 1000));
                     }
@@ -118,43 +144,47 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 }
 
                 if (!res.ok) {
+                    setStoppedEarly(found.length > 0);
                     setError(
-                        // The reason is an HTTP status or a network error, never
-                        // a secret. Shown because "try again in a moment" with no
-                        // detail is what made the first real failure impossible
-                        // to diagnose without a server log.
                         data.reason ? `${data.error} (${data.reason})` : (data.error ?? "Could not check your songs against Spotify")
                     );
                     if (data.reason === "not_connected" || data.reason === "reconnect") {
                         setStatus({ configured: true, connected: false });
                     }
-                    return;
+                    break;
                 }
-                header ??= { name: data.name, songCount: data.songCount, matchupCount: data.matchupCount };
-                collected.push(...(data.matches as Match[]));
-                setProgress({ done: collected.length, total: data.total });
-                if (data.done) break;
-                offset = collected.length;
-            }
 
-            const data = { ...header!, matches: collected };
-            setReview(data);
-            // Confident matches start ticked; anything less starts UNTICKED.
-            // A partial is a guess, and a guess should have to be looked at
-            // and agreed to rather than opted out of -- the default is the
-            // decision most people will accept without reading.
-            setAccepted(
-                new Set(
-                    (data.matches as Match[])
-                        .filter((m) => m.match && m.confidence === "high" && !m.versionWarning)
-                        .map((m) => m.rank)
-                )
-            );
+                setHeader({
+                    name: data.name,
+                    songCount: data.songCount,
+                    matchupCount: data.matchupCount,
+                    total: data.total,
+                });
+                found.push(...(data.matches as Match[]));
+                setCollected([...found]);
+                setProgress({ done: found.length, total: data.total });
+                if (data.done) break;
+            }
         } catch {
+            setStoppedEarly(found.length > 0);
             setError("Could not reach SongRank. Check your connection and try again.");
         } finally {
             setBusy(null);
             setWaiting(null);
+        }
+
+        // Show the review for whatever was found, complete or not. Partial
+        // results are the point: 95 of 200 songs is a playlist, and throwing
+        // it away because the other 105 are behind a quota helps nobody.
+        if (found.length > 0) {
+            setReview({ name: header?.name ?? "", songCount: 0, matchupCount: 0, matches: found });
+            setAccepted(
+                new Set(
+                    found
+                        .filter((m) => m.match && m.confidence === "high" && !m.versionWarning)
+                        .map((m) => m.rank)
+                )
+            );
         }
     }
 
@@ -236,15 +266,38 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                     You&apos;ll see what each song matched before anything is created.
                 </p>
                 {error && <p className="mb-3 text-sm text-danger">{error}</p>}
-                <button type="button" onClick={runMatch} disabled={busy !== null} className="btn-secondary">
-                    {busy === "matching"
-                        ? waiting !== null
-                            ? `Spotify is busy — resuming in ${waiting}s`
-                            : progress
-                              ? `Checking songs… ${progress.done} of ${progress.total}`
-                              : "Checking songs…"
-                        : "Check songs on Spotify"}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => runMatch(false)} disabled={busy !== null} className="btn-secondary">
+                        {busy === "matching"
+                            ? waiting !== null
+                                ? `Spotify is busy — resuming in ${waiting}s`
+                                : progress
+                                  ? `Checking songs… ${progress.done} of ${progress.total}`
+                                  : "Checking songs…"
+                            : "Check songs on Spotify"}
+                    </button>
+                    {/* Waiting must never be a trap. Stopping keeps every
+                        song matched so far and goes straight to the review,
+                        so a throttled export is a shorter playlist rather
+                        than a wasted twenty minutes. */}
+                    {busy === "matching" && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                stopRef.current = true;
+                            }}
+                            className="btn-ghost"
+                        >
+                            Stop and use what&apos;s found
+                        </button>
+                    )}
+                </div>
+                {busy === "matching" && progress && (
+                    <p className="mt-2 text-xs text-fg-muted">
+                        Spotify limits how fast an app can search, so a long ranking takes a while. Everything
+                        found so far is kept if you stop.
+                    </p>
+                )}
             </div>
         );
     }
@@ -260,6 +313,24 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 {missing > 0 ? `, ${missing} not found on Spotify` : ""}. Nothing is created until you press the
                 button.
             </p>
+            {/* Said plainly, because a playlist that silently stops at song 95
+                of 200 is worse than a short one you chose. */}
+            {stoppedEarly && header && review.matches.length < header.total && (
+                <p className="mb-3 rounded-lg border border-border bg-bg-soft-2/60 px-3 py-2 text-xs text-fg-muted">
+                    Checked the top <strong className="text-fg">{review.matches.length}</strong> of{" "}
+                    {header.total} songs before Spotify&apos;s rate limit stopped play. You can make a playlist
+                    from these now — it will be the top {review.matches.length} of your ranking, in order — or
+                    carry on checking the rest.{" "}
+                    <button
+                        type="button"
+                        onClick={() => runMatch(true)}
+                        disabled={busy !== null}
+                        className="underline underline-offset-2 hover:text-fg"
+                    >
+                        Carry on from {review.matches.length + 1}
+                    </button>
+                </p>
+            )}
             {error && <p className="mb-3 text-sm text-danger">{error}</p>}
 
             <ul className="mb-4 max-h-96 space-y-1 overflow-y-auto">
