@@ -90,6 +90,11 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
     const [header, setHeader] = useState<{ name: string; songCount: number; matchupCount: number; total: number } | null>(null);
     /** Set when the walk stopped early, so the UI can offer to carry on. */
     const [stoppedEarly, setStoppedEarly] = useState(false);
+    /** True when the person pressed Stop, rather than Spotify closing the
+     * door. The consequence is identical; the sentence is not, and telling
+     * someone a rate limit stopped them when they stopped themselves reads as
+     * the app misunderstanding what just happened. */
+    const [stoppedByUser, setStoppedByUser] = useState(false);
     /** Seconds Spotify said to wait, when it is long enough to be a lockout
      * rather than a pause. Null when we are not locked out. */
     const [lockedOutFor, setLockedOutFor] = useState<number | null>(null);
@@ -139,6 +144,7 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
         setBusy("matching");
         setError(null);
         setStoppedEarly(false);
+        setStoppedByUser(false);
         setLockedOutFor(null);
         stopRef.current = false;
 
@@ -149,11 +155,23 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
         if (!resume) setCollected([]);
         let waits = 0;
         let fromCache = 0;
+        /**
+         * Whether this walk has told the person ANYTHING about how it ended.
+         *
+         * A safety net, not bookkeeping. Every path out of the loop below is
+         * supposed to leave either results, an error or a lockout notice on
+         * screen, and one of them quietly did not: locked out before the first
+         * song matched, the button spun for a moment, cleared itself and said
+         * nothing at all. Rather than fix that one path and trust the next one
+         * added, the end of this function checks.
+         */
+        let explained = false;
 
         try {
             for (;;) {
                 if (stopRef.current) {
                     setStoppedEarly(true);
+                    setStoppedByUser(true);
                     break;
                 }
                 abortRef.current = new AbortController();
@@ -182,10 +200,20 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                     // server-side (see the cache in lib/queries.ts), so coming
                     // back later resumes for free rather than re-paying for
                     // the songs already done.
-                    if (seconds > LONG_LOCKOUT_SECONDS || waits >= MAX_RATE_LIMIT_WAITS) {
+                    const longLockout = seconds > LONG_LOCKOUT_SECONDS;
+                    if (longLockout || waits >= MAX_RATE_LIMIT_WAITS) {
                         setStoppedEarly(true);
-                        setLockedOutFor(seconds > LONG_LOCKOUT_SECONDS ? seconds : null);
-                        setError(null);
+                        setLockedOutFor(longLockout ? seconds : null);
+                        // The lockout notice speaks for the long case. The
+                        // "waited many times and got nowhere" case has no
+                        // notice of its own, so it says so itself rather than
+                        // ending in silence.
+                        setError(
+                            longLockout
+                                ? null
+                                : "Spotify is still rate-limiting this app. Everything found so far is kept — you can make a playlist from it now, or carry on checking."
+                        );
+                        explained = true;
                         break;
                     }
 
@@ -204,6 +232,7 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                     setError(
                         data.reason ? `${data.error} (${data.reason})` : (data.error ?? "Could not check your songs against Spotify")
                     );
+                    explained = true;
                     if (data.reason === "not_connected" || data.reason === "reconnect") {
                         setStatus({ configured: true, connected: false });
                     }
@@ -227,9 +256,12 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
             // An abort is this person pressing Stop, not a failure. Saying
             // "could not reach SongRank" when they asked it to stop would be
             // both wrong and alarming.
-            if (!(err instanceof DOMException && err.name === "AbortError")) {
+            if (err instanceof DOMException && err.name === "AbortError") {
+                setStoppedByUser(true);
+            } else {
                 setError("Could not reach SongRank. Check your connection and try again.");
             }
+            explained = true;
         } finally {
             setBusy(null);
             setWaiting(null);
@@ -239,6 +271,15 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
         // Show the review for whatever was found, complete or not. Partial
         // results are the point: 95 of 200 songs is a playlist, and throwing
         // it away because the other 105 are behind a quota helps nobody.
+        // Never end in silence. Results, an error or a lockout notice -- one of
+        // the three, always. Pressing Stop is its own explanation; anything
+        // else reaching here is a path that forgot to say what happened, and a
+        // button that spins and then clears itself is indistinguishable from a
+        // broken app.
+        if (found.length === 0 && !explained && !stopRef.current) {
+            setError("Spotify didn't return anything this time, and didn't say why. Try again in a few minutes.");
+        }
+
         if (found.length > 0) {
             setReview({ matches: found });
             setAccepted(
@@ -289,6 +330,31 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
     // Not configured on this deployment: show nothing rather than a dead end.
     if (!status?.configured) return null;
 
+    /**
+     * A lockout, said as one -- and said in BOTH branches below.
+     *
+     * Counting down through twenty minutes is useless to watch, and retrying
+     * into it is how the penalty gets extended, so a long wait stops and says
+     * when to come back instead. That is only a fair answer because matches
+     * are remembered server-side: coming back costs nothing for the part
+     * already done.
+     *
+     * It lives out here because putting it only in the review branch made the
+     * WORST case the silent one. Locked out with nothing yet matched, there is
+     * no review to render it in -- so the button spun for a moment, cleared
+     * itself, and said absolutely nothing. A dead end with no explanation is
+     * the one outcome this whole feature is built to avoid.
+     */
+    const lockoutNotice = lockedOutFor !== null && (
+        <p className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-fg">
+            Spotify has hit this app&apos;s rate limit and won&apos;t answer again{" "}
+            <strong>{describeWait(lockedOutFor)}</strong>.{" "}
+            {collected.length > 0
+                ? `The ${collected.length} songs checked so far are saved — make a playlist from them now, or come back later and carry on, which won't re-check anything already done.`
+                : "Nothing was checked this time. Come back after that and it will pick up where it left off — anything already checked, by you or anyone else, costs nothing."}
+        </p>
+    );
+
     if (result) {
         return (
             <div className="card p-4">
@@ -328,6 +394,7 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 <p className="mb-3 text-sm text-fg-muted">
                     You&apos;ll see what each song matched before anything is created.
                 </p>
+                {lockoutNotice}
                 {error && <p className="mb-3 text-sm text-danger">{error}</p>}
                 <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => runMatch(false)} disabled={busy !== null} className="btn-secondary">
@@ -382,27 +449,16 @@ export default function SpotifyExport({ tournamentId }: { tournamentId: string }
                 {missing > 0 ? `, ${missing} not found on Spotify` : ""}. Nothing is created until you press the
                 button.
             </p>
+            {lockoutNotice}
             {/* Said plainly, because a playlist that silently stops at song 95
                 of 200 is worse than a short one you chose. */}
-            {/* A lockout, said as one. Counting down through twenty minutes is
-                useless to watch, and retrying into it is how the penalty gets
-                extended -- so this stops and says when to come back. Which is
-                only a fair answer because matches are remembered server-side:
-                coming back costs nothing for the part already done. */}
-            {lockedOutFor !== null && (
-                <p className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-fg">
-                    Spotify has hit this app&apos;s rate limit and won&apos;t answer again{" "}
-                    <strong>{describeWait(lockedOutFor)}</strong>. The {review.matches.length} songs checked so far
-                    are saved — make a playlist from them now, or come back later and carry on, which won&apos;t
-                    re-check anything already done.
-                </p>
-            )}
             {stoppedEarly && header && review.matches.length < header.total && (
                 <p className="mb-3 rounded-lg border border-border bg-bg-soft-2/60 px-3 py-2 text-xs text-fg-muted">
                     Checked the top <strong className="text-fg">{review.matches.length}</strong> of{" "}
-                    {header.total} songs before Spotify&apos;s rate limit stopped play. You can make a playlist
-                    from these now — it will be the top {review.matches.length} of your ranking, in order — or
-                    carry on checking the rest.{" "}
+                    {header.total} songs
+                    {stoppedByUser ? " before you stopped it" : " before Spotify's rate limit stopped play"}. You
+                    can make a playlist from these now — it will be the top {review.matches.length} of your
+                    ranking, in order — or carry on checking the rest.{" "}
                     <button
                         type="button"
                         onClick={() => runMatch(true)}
