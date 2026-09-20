@@ -78,6 +78,15 @@ const MAX_ATTEMPTS = 3;
 /** Base backoff, doubled per attempt, and overridden by `Retry-After`. */
 const RETRY_BASE_MS = 500;
 
+/**
+ * The longest pause this module will take inside a request.
+ *
+ * Anything longer is the caller's to serve, in a browser, where blocking costs
+ * nothing. Two seconds absorbs the trivial "slow down a moment" case without
+ * putting the function's duration budget anywhere near a limiter's whim.
+ */
+const MAX_INLINE_WAIT_MS = 2000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -328,29 +337,37 @@ export async function matchOne(
  * presented as "Spotify didn't answer" because the aborted fetch is
  * indistinguishable from an upstream that went quiet.
  *
- * Two rather than "all of them", and it started at four. Spotify meters this
- * endpoint PER APPLICATION rather than per user, and an app still in
- * development mode -- which is where an app stays until its owner applies for
- * an extended quota -- gets a much smaller allowance than a published one. At
- * four, a real ranking earned an HTTP 429 partway through.
+ * ONE. It started at four, went to two, and both were still throttled on a
+ * real ranking.
  *
- * Two plus honouring `Retry-After` (see apiSearch) is the combination that
- * finishes. Turning it up again without an extended quota just moves where the
- * 429 lands. See lib/itunes.ts's UpstreamUnavailableError comment for what a
- * burst at a metered search endpoint already cost this app once.
+ * Spotify meters this endpoint PER APPLICATION rather than per user, and an
+ * app in development mode -- where an app stays until its owner applies for an
+ * extended quota -- gets a small allowance. Parallelism does not buy anything
+ * against a quota that is counted in requests: it only spends the same
+ * allowance sooner and trips the limiter earlier in the ranking. Serial plus
+ * honouring `Retry-After` is what actually finishes, and it is the same
+ * conclusion lib/itunes.ts's UpstreamUnavailableError comment already records
+ * about bursting at a metered search endpoint.
+ *
+ * Kept as a named constant, and kept honest at 1, so that raising it is a
+ * decision somebody makes on purpose after getting an extended quota -- not a
+ * tuning knob that quietly reintroduces the 429.
  */
-export const MATCH_CONCURRENCY = 2;
+export const MATCH_CONCURRENCY = 1;
 
 /**
  * How many songs one match request handles.
  *
- * The client walks a ranking in slices of this size so no single request can
- * outlive the function's duration limit, however long the ranking is. 25 at a
- * concurrency of 4 is roughly seven round trips deep -- a couple of seconds --
- * and gives a 200-song ranking eight requests rather than one that never
- * finishes.
+ * The client walks a ranking in slices of this size, so no single request can
+ * outlive the function's duration limit however long the ranking is.
+ *
+ * Ten rather than twenty-five because a slice is also the unit of RECOVERY: a
+ * rate limit part-way through one costs the whole slice, since the browser
+ * retries it from the start. A real ranking got twenty-five songs in and then
+ * kept losing that work. Smaller slices lose less and check in more often,
+ * which is what makes progress visible rather than merely claimed.
  */
-export const MATCH_SLICE = 25;
+export const MATCH_SLICE = 10;
 
 /**
  * Every song in `songs`, in order, looked up a few at a time.
@@ -434,13 +451,23 @@ export function apiSearch(accessToken: string): SpotifySearch {
                 return [];
             }
             const wait = retryAfterSeconds(res);
-            if (attempt === MAX_ATTEMPTS) {
-                // The wait is handed up rather than swallowed so the caller
-                // can pause for exactly as long as Spotify asked, somewhere
-                // that isn't inside a serverless function's duration budget.
+
+            // A LONG wait is never served here. This runs inside a serverless
+            // function with a hard duration limit, and Spotify's limiter can
+            // ask for far more than that -- sleeping on it burns the whole
+            // budget and the function is killed mid-slice, which the browser
+            // sees as a dead request rather than as "wait and resume". So
+            // anything past MAX_INLINE_WAIT_MS is handed straight up, and the
+            // browser does the waiting where waiting is free.
+            //
+            // This was the bug that made honouring Retry-After look like it
+            // had not helped: the header was read correctly and then slept on
+            // in the one place that could not afford to.
+            const waitMs = wait !== null ? wait * 1000 : RETRY_BASE_MS * 2 ** (attempt - 1);
+            if (attempt === MAX_ATTEMPTS || waitMs > MAX_INLINE_WAIT_MS) {
                 throw new SpotifyUnavailableError(`HTTP ${res.status}`, wait);
             }
-            await sleep(wait !== null ? wait * 1000 : RETRY_BASE_MS * 2 ** (attempt - 1));
+            await sleep(waitMs);
         }
         // Unreachable: the loop either returns or throws on its last attempt.
         throw new SpotifyUnavailableError("exhausted retries");

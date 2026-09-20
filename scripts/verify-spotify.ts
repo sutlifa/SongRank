@@ -265,9 +265,38 @@ check(
     true
 );
 check("no gaps in the result array", ordered.every((m) => m !== undefined), true);
-// The point of the change: several lookups really are in flight at once.
-check("lookups actually overlap", peakInFlight > 1, true);
-check("...but not unboundedly", peakInFlight <= MATCH_CONCURRENCY, true);
+// The DEFAULT is serial, because a development-mode quota is counted in
+// requests and parallelism only spends it sooner. Asserted so that raising it
+// is a deliberate decision after getting an extended quota, not a quiet tuning
+// change that reintroduces the 429.
+check("the default is one at a time", MATCH_CONCURRENCY, 1);
+check("...and the default really is serial", peakInFlight, 1);
+
+// The mechanism still has to work, because it is what keeps order correct when
+// concurrency is ever raised again. Exercised explicitly rather than relying
+// on the default to prove it.
+let parallelPeak = 0;
+let parallelInFlight = 0;
+const parallelSearch = async (query: string) => {
+    parallelInFlight += 1;
+    parallelPeak = Math.max(parallelPeak, parallelInFlight);
+    const index = Number(query.match(/Track (\d+)/)?.[1] ?? "0");
+    await new Promise((resolve) => setTimeout(resolve, (slowFirst.length - index) * 4));
+    parallelInFlight -= 1;
+    return slowFirst.filter((t) => t.title === `Track ${index}`);
+};
+const parallel = await matchTracks(
+    slowFirst.map((t) => ({ title: t.title, artist: t.artist })),
+    parallelSearch,
+    { concurrency: 3 }
+);
+check("raising concurrency really overlaps lookups", parallelPeak > 1, true);
+check("...stays within what was asked for", parallelPeak <= 3, true);
+check(
+    "...and STILL comes back in rank order",
+    parallel.every((m, i) => m.rank === i + 1 && m.title === `Track ${i}`),
+    true
+);
 
 // A slice of a longer ranking must report the ranks it actually occupies.
 const slice = await matchTracks(

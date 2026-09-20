@@ -34,9 +34,12 @@ interface Match {
 }
 
 /** How many rate-limit pauses one match walk will sit out before giving up.
- * Enough to get a long ranking through a development-mode quota; few enough
- * that a genuinely throttled app stops rather than looping forever. */
-const MAX_RATE_LIMIT_WAITS = 12;
+ * A development-mode quota will throttle a long ranking repeatedly -- that is
+ * normal, not a fault -- and slices are small, so a 200-song export can
+ * legitimately need a couple of dozen pauses. High enough to let that finish;
+ * bounded so a genuinely stuck app stops rather than looping until the tab is
+ * closed. */
+const MAX_RATE_LIMIT_WAITS = 40;
 
 interface Review {
     name: string;
