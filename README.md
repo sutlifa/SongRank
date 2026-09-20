@@ -259,6 +259,7 @@ node --experimental-strip-types scripts/verify-username.ts
 node --experimental-strip-types scripts/verify-filter.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-fuzzy.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify.ts
+AUTH_SECRET=anything node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-spotify-auth.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-parse.ts
 node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/verify-resolve.ts
 
@@ -309,6 +310,14 @@ exercised by a real run. It matters more than it looks: a wrong match doesn't
 fail, it lands a karaoke version or a cover in somebody's playlist and the
 playlist looks entirely normal. That silent wrongness is why the old Spotify
 *import* was removed rather than fixed.
+
+`verify-spotify-auth.ts` covers the parts of the Spotify authorisation that
+decide whether a stolen database is also a stolen Spotify account, and whether a
+crafted callback can attach someone else's account to yours. Both fail silently
+when wrong -- encryption that doesn't authenticate still round-trips, and a
+state check that always passes still completes a normal login -- so it asserts
+the negative cases specifically: tampered ciphertext is refused, a *missing*
+CSRF state never counts as a match, and the grant stays at exactly two scopes.
 
 `verify-starters.ts` checks the hand-typed data in `lib/starterLists.ts`, where every way of
 being wrong is silent: a duplicate id hides a list behind another, a song repeated inside a

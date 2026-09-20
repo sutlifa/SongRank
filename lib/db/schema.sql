@@ -229,3 +229,42 @@ CREATE INDEX IF NOT EXISTS notifications_user_idx
 CREATE INDEX IF NOT EXISTS notifications_unread_idx
   ON notifications (user_id)
   WHERE read_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Spotify playlist export
+-- ---------------------------------------------------------------------------
+
+-- Authorisation to write playlists on one person's Spotify account.
+--
+-- One row per SongRank user, keyed by our own user id: Spotify is a
+-- capability here, not an identity. Nobody signs in with it and nobody's
+-- account IS it, so this deliberately does not touch auth.ts, which stays
+-- Google-only with a JWT session and no database adapter. Disconnecting is
+-- then just deleting a row, with no question about what it does to a session.
+--
+-- The tokens are stored ENCRYPTED (see lib/spotifyAuth.ts), not as Spotify
+-- returned them. A refresh token does not expire: anyone holding one can mint
+-- access tokens and write to that account indefinitely, so this column is a
+-- live credential and a database dump would be a credential leak. Neon
+-- encrypts at rest, which protects the disk but not a dump, a stray backup, or
+-- anything that gets query access. The encryption key is derived from
+-- AUTH_SECRET, which lives in the environment and is NOT in the database, so
+-- neither half is useful alone.
+--
+-- Rotating AUTH_SECRET therefore invalidates every row here. That is the
+-- correct trade and it fails safely -- decryption returns null and the person
+-- is asked to reconnect, which is an ordinary recoverable state rather than an
+-- error.
+CREATE TABLE IF NOT EXISTS spotify_accounts (
+  user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  -- The authorised account's own Spotify id, needed to create a playlist
+  -- under it. Not a secret, and not encrypted.
+  spotify_user_id    TEXT NOT NULL,
+  access_token_enc   TEXT NOT NULL,
+  refresh_token_enc  TEXT NOT NULL,
+  -- When the ACCESS token stops working. The refresh token has no expiry,
+  -- which is exactly why it is the valuable half.
+  expires_at         TIMESTAMPTZ NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);

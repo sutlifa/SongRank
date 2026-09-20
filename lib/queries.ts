@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { sql } from "./db";
 import type { Song, Vote, ClipSeconds, RankingDepth, TournamentFormat } from "./types";
 import { deriveTournament } from "./tournamentEngine";
+import { encryptToken, decryptToken } from "./spotifyAuth";
 
 /**
  * Tournament persistence for signed-in users.
@@ -551,4 +552,103 @@ export async function getTopCuts(
         });
     }
     return out;
+}
+
+/** One person's stored Spotify authorisation, tokens already decrypted. */
+export interface SpotifyAccount {
+    spotifyUserId: string;
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: Date;
+}
+
+/**
+ * Stores (or replaces) someone's Spotify authorisation.
+ *
+ * Tokens are encrypted here rather than by the caller, so there is exactly one
+ * place that decides they get encrypted at all -- a second caller writing this
+ * table cannot forget. See lib/spotifyAuth.ts for why they are encrypted on
+ * top of Neon's at-rest encryption.
+ */
+export async function saveSpotifyAccount(
+    userId: number,
+    account: { spotifyUserId: string; accessToken: string; refreshToken: string; expiresAt: Date }
+): Promise<void> {
+    await sql`
+        INSERT INTO spotify_accounts (user_id, spotify_user_id, access_token_enc, refresh_token_enc, expires_at)
+        VALUES (
+            ${userId},
+            ${account.spotifyUserId},
+            ${encryptToken(account.accessToken)},
+            ${encryptToken(account.refreshToken)},
+            ${account.expiresAt}
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          spotify_user_id   = EXCLUDED.spotify_user_id,
+          access_token_enc  = EXCLUDED.access_token_enc,
+          refresh_token_enc = EXCLUDED.refresh_token_enc,
+          expires_at        = EXCLUDED.expires_at,
+          updated_at        = now()
+    `;
+}
+
+/**
+ * Updates just the access token after a refresh.
+ *
+ * Separate from `saveSpotifyAccount` because Spotify only sometimes returns a
+ * new refresh token, and the old one stays valid when it doesn't. Overwriting
+ * it with an absent value would revoke this person's authorisation on a
+ * routine refresh, which they would experience as being randomly logged out of
+ * a feature they never touched.
+ */
+export async function updateSpotifyAccessToken(
+    userId: number,
+    accessToken: string,
+    expiresAt: Date,
+    refreshToken?: string
+): Promise<void> {
+    if (refreshToken) {
+        await sql`
+            UPDATE spotify_accounts
+               SET access_token_enc = ${encryptToken(accessToken)},
+                   refresh_token_enc = ${encryptToken(refreshToken)},
+                   expires_at = ${expiresAt},
+                   updated_at = now()
+             WHERE user_id = ${userId}
+        `;
+        return;
+    }
+    await sql`
+        UPDATE spotify_accounts
+           SET access_token_enc = ${encryptToken(accessToken)},
+               expires_at = ${expiresAt},
+               updated_at = now()
+         WHERE user_id = ${userId}
+    `;
+}
+
+/**
+ * Reads someone's authorisation back, decrypted -- or null.
+ *
+ * Null also covers "stored, but no longer decryptable", which is what a
+ * rotated AUTH_SECRET looks like. Treating that as "not connected" is right:
+ * the row is useless, and the person needs to reconnect either way.
+ */
+export async function getSpotifyAccount(userId: number): Promise<SpotifyAccount | null> {
+    const [row] = await sql<
+        { spotify_user_id: string; access_token_enc: string; refresh_token_enc: string; expires_at: Date }[]
+    >`
+        SELECT spotify_user_id, access_token_enc, refresh_token_enc, expires_at
+        FROM spotify_accounts
+        WHERE user_id = ${userId}
+    `;
+    if (!row) return null;
+    const accessToken = decryptToken(row.access_token_enc);
+    const refreshToken = decryptToken(row.refresh_token_enc);
+    if (!accessToken || !refreshToken) return null;
+    return { spotifyUserId: row.spotify_user_id, accessToken, refreshToken, expiresAt: row.expires_at };
+}
+
+export async function deleteSpotifyAccount(userId: number): Promise<void> {
+    await sql`DELETE FROM spotify_accounts WHERE user_id = ${userId}`;
 }
