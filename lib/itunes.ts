@@ -10,7 +10,7 @@
 // because Spotify meters search per APPLICATION and the development-mode
 // quota is spent by a single long ranking, locking the app out for most of a
 // day. A finished ranking is handed to a playlist converter instead (see
-// components/PlaylistHandoff.tsx), so iTunes is the only external source
+// components/ExportPanel.tsx), so iTunes is the only external source
 // left in the app.
 //
 // Every call here runs server-side only (from /api/songs/search,

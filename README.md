@@ -60,14 +60,13 @@ round schedule would need.
   specific recording, so changing one after the fact would quietly rewrite what those votes
   meant.
 - **Export** — copy as text, download CSV, or download JSON.
-- **Turn it into a playlist** — copy the ranking as `Title - Artist`, one per line, and
-  paste it into [Soundiiz](https://soundiiz.com/) or
-  [TuneMyMusic](https://www.tunemymusic.com/), which build the playlist on Spotify,
-  Apple Music, YouTube Music or wherever you listen. Line order carries the ranking, so
-  the playlist comes out in order. Nothing is sent anywhere by SongRank — you paste it
-  yourself.
+  The copied text is `Title - Artist`, one per line — the form
+  [Soundiiz](https://soundiiz.com/) and [TuneMyMusic](https://www.tunemymusic.com/) take,
+  so the same copy button that gives you the list also turns it into a playlist on
+  Spotify, Apple Music or YouTube Music. Line order carries the ranking. Nothing is sent
+  anywhere by SongRank — you paste it yourself.
 
-  This replaced a real Spotify integration, and the reason is worth recording. SongRank
+  Those links replaced a real Spotify integration, and the reason is worth recording. SongRank
   built the playlist directly for a while: OAuth, encrypted tokens, a match-review step
   so no wrong recording could land silently, and a shared cache of song-to-track answers.
   It worked. It was still unusable, because Spotify meters search **per application**
@@ -75,8 +74,8 @@ round schedule would need.
   one two-hundred-song ranking and then locked out for the best part of a day. Lifting
   that is a quota review Spotify may or may not grant. Carrying an account connection,
   two database tables and an OAuth redirect URI on the hope of an approval was the wrong
-  trade, so it came out. The handoff above needs no account, no configuration and no
-  quota, and it works for every music service instead of one.
+  trade, so it came out. Two links and a copy button need no account, no configuration
+  and no quota, and work for every music service instead of one.
 - **Share, copy and compare** — any saved ranking can be made public (private by default,
   always). Public ones show up on `/browse`, friends first. Take someone's song list as a
   **template**: it opens in the normal build screen, where you can add and remove songs, swap
