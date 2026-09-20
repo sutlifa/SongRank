@@ -96,8 +96,21 @@ export async function POST(req: Request) {
         // has ever been looked up, by anyone, is never looked up again. A
         // re-run or a resumed export therefore costs nothing for the part
         // already done.
+        //
+        // The cache is an ACCELERATOR, never a dependency. A table that has
+        // not been migrated yet, or a database hiccup, must cost speed and
+        // nothing else -- an export that dies because its optimisation is
+        // unavailable is strictly worse than one that never had it. So both
+        // halves are guarded and both log loudly: a cache silently doing
+        // nothing looks exactly like a rate limit that never lifts.
         const keys = slice.map((song) => cacheKey(song.title, song.artist));
-        const cached = await getCachedSpotifyMatches(keys);
+        let cached: Awaited<ReturnType<typeof getCachedSpotifyMatches>>;
+        try {
+            cached = await getCachedSpotifyMatches(keys);
+        } catch (err) {
+            console.error("SPOTIFY MATCH CACHE READ FAILED:", err);
+            cached = new Map();
+        }
         const keyOf = (i: number) => `${keys[i].titleKey}\u0000${keys[i].artistKey}`;
 
         const unknown: { song: { title: string; artist: string }; index: number }[] = [];
@@ -165,8 +178,17 @@ export async function POST(req: Request) {
                 );
             } finally {
                 // Deliberately in `finally`: the case worth saving for is the
-                // one where the line above threw.
-                if (toRemember.length > 0) await saveCachedSpotifyMatches(toRemember);
+                // one where the line above threw. And deliberately swallowed:
+                // failing to REMEMBER an answer must not destroy the answer,
+                // least of all on the rate-limited path, where the whole
+                // point is to hand back whatever was bought.
+                if (toRemember.length > 0) {
+                    try {
+                        await saveCachedSpotifyMatches(toRemember);
+                    } catch (err) {
+                        console.error("SPOTIFY MATCH CACHE WRITE FAILED:", err);
+                    }
+                }
             }
         }
         return NextResponse.json({
@@ -212,7 +234,20 @@ export async function POST(req: Request) {
                 { status: 503 }
             );
         }
+        // `reason` rides along for the same reason it does on the 503 above:
+        // the friendly sentence alone left the first real failure of this
+        // route undiagnosable without someone reading a server log, and the
+        // person who hits it is the one who can say what it said. It is an
+        // error message, never a token, a secret or a stack trace.
         console.error("SPOTIFY MATCH ERROR:", err);
-        return NextResponse.json({ error: "Could not check your songs against Spotify" }, { status: 500 });
+        return NextResponse.json(
+            {
+                error: "Could not check your songs against Spotify",
+                // Capped: a driver can attach a very long detail string,
+                // and this ends up rendered in a sentence on screen.
+                reason: (err instanceof Error ? err.message : String(err)).slice(0, 200),
+            },
+            { status: 500 }
+        );
     }
 }

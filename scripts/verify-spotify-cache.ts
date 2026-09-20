@@ -150,6 +150,33 @@ check("...the old hit is in it", known("Old Hit", "Old Artist"), true);
 check("...the unknown song is not", known("Never Asked", "Nobody"), false);
 check("...and neither is the stale miss", known("Stale Miss", "Old Artist"), false);
 
+// --- two songs, one key, one batch ---------------------------------------
+//
+// THIS IS THE ONE THAT BROKE IN PRODUCTION. Postgres refuses an
+// INSERT ... ON CONFLICT DO UPDATE whose own rows collide -- "ON CONFLICT DO
+// UPDATE command cannot affect row a second time" -- and it refuses the WHOLE
+// statement, so a single repeated song threw away every other answer in the
+// slice and surfaced as "Could not check your songs against Spotify".
+//
+// It is not an exotic input. Keys normalise down to title plus PRIMARY artist,
+// so a soundtrack crediting one song two ways is one key, and a list that
+// simply names a song twice is one key. A two-hundred-song ranking hits this.
+let duplicateSave: unknown = null;
+try {
+    await saveCachedSpotifyMatches([
+        { ...key("Twice Over", "Same Artist"), uri: "spotify:track:1111111111111111111111", title: "first", artist: "Same Artist", album: null, confidence: "partial" },
+        { ...key("Elsewhere", "Other Artist"), uri: "spotify:track:2222222222222222222222", title: "other", artist: "Other Artist", album: null, confidence: "high" },
+        // Same song, credited differently -- the same key as the first row.
+        { ...key("Twice Over", "Same Artist & Friends"), uri: "spotify:track:3333333333333333333333", title: "second", artist: "Same Artist", album: null, confidence: "high" },
+    ]);
+} catch (err) {
+    duplicateSave = err;
+}
+check("a batch containing one song twice does not throw", duplicateSave, null);
+check("...the last answer wins", (await look("Twice Over", "Same Artist"))?.uri, "spotify:track:3333333333333333333333");
+// The part that actually cost the user their export: the OTHER songs.
+check("...and the rest of the batch is still saved", (await look("Elsewhere", "Other Artist"))?.uri, "spotify:track:2222222222222222222222");
+
 check("asking about nothing is not a query", (await getCachedSpotifyMatches([])).size, 0);
 // Saving nothing must not be a malformed INSERT with no rows.
 await saveCachedSpotifyMatches([]);

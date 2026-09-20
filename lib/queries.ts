@@ -730,12 +730,24 @@ export async function getCachedSpotifyMatches(
  * Upsert rather than insert-if-absent: a miss that has since become a hit
  * should replace the miss, and re-checking after the TTL should reset the
  * clock. Written in one statement for the same reason the read is one query.
+ *
+ * DE-DUPLICATED FIRST, and not as a tidiness measure. Postgres refuses an
+ * INSERT ... ON CONFLICT DO UPDATE whose own rows collide -- "ON CONFLICT DO
+ * UPDATE command cannot affect row a second time" -- and it refuses the WHOLE
+ * statement, so one repeat poisons every other answer in the batch. Two songs
+ * in one ranking really do land on one key: keys are normalised down to title
+ * plus PRIMARY artist, so "Let It Go -- Idina Menzel" and "Let It Go -- Idina
+ * Menzel & Cast" are the same row, as is any list that simply names a song
+ * twice. Last write wins, which is the freshest answer.
  */
 export async function saveCachedSpotifyMatches(matches: CachedSpotifyMatch[]): Promise<void> {
-    if (matches.length === 0) return;
+    const unique = new Map<string, CachedSpotifyMatch>();
+    for (const m of matches) unique.set(`${m.titleKey}\u0000${m.artistKey}`, m);
+    const rows = [...unique.values()];
+    if (rows.length === 0) return;
     await sql`
         INSERT INTO spotify_track_matches ${sql(
-            matches.map((m) => ({
+            rows.map((m) => ({
                 title_key: m.titleKey,
                 artist_key: m.artistKey,
                 track_uri: m.uri,
